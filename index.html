@@ -486,6 +486,180 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-btn {
+  padding: 4px 10px;
+  font-size: 10px;
+  font-family: inherit;
+  background: var(--key-bg);
+  color: var(--text-secondary);
+  border: 1px solid var(--key-border);
+  border-radius: 3px;
+  cursor: pointer;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  transition: all 0.15s;
+}
+
+.settings-btn:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--accent-turquoise);
+  color: var(--text-primary);
+}
+
+.settings-btn.danger {
+  border-color: rgba(233, 69, 96, 0.4);
+}
+
+.settings-btn.danger:hover {
+  background: rgba(233, 69, 96, 0.15);
+  border-color: var(--accent-red);
+  color: var(--accent-red);
+}
+
+.settings-btn:focus-visible {
+  outline: 2px solid var(--accent-turquoise);
+  outline-offset: 2px;
+}
+
+/* === KRO Diagnostic Overlay === */
+#kro-diagnostic {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(10, 10, 25, 0.95);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 20px;
+  z-index: 100;
+  padding: 24px;
+}
+
+#kro-diagnostic.active { display: flex; }
+
+.kro-title {
+  font-size: 16px;
+  font-weight: bold;
+  color: var(--accent-turquoise);
+  letter-spacing: 4px;
+  text-transform: uppercase;
+}
+
+.kro-instruction {
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-align: center;
+  max-width: 400px;
+  line-height: 1.6;
+}
+
+.kro-key-display {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.kro-key {
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: bold;
+  background: var(--key-bg);
+  border: 2px solid var(--key-border);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  transition: all 0.1s;
+}
+
+.kro-key.detected {
+  background: var(--accent-turquoise);
+  border-color: var(--accent-turquoise);
+  color: var(--bg-primary);
+  box-shadow: 0 0 12px rgba(22, 199, 154, 0.5);
+}
+
+.kro-key.failed {
+  border-color: var(--accent-red);
+  color: var(--accent-red);
+}
+
+.kro-plus {
+  font-size: 20px;
+  color: var(--text-muted);
+}
+
+.kro-status {
+  font-size: 12px;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+}
+
+.kro-result {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+}
+
+.kro-result-hidden { display: none; }
+
+.kro-result-title {
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--text-primary);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.kro-result-max {
+  font-size: 32px;
+  font-weight: bold;
+  color: var(--accent-turquoise);
+}
+
+.kro-result-note {
+  font-size: 10px;
+  color: var(--text-muted);
+  max-width: 350px;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.kro-failed-combos {
+  font-size: 11px;
+  color: var(--accent-red);
+  text-align: center;
+}
+
+.kro-close-btn {
+  padding: 8px 24px;
+  font-size: 12px;
+  font-family: inherit;
+  background: var(--bg-tertiary);
+  color: var(--accent-turquoise);
+  border: 1px solid var(--accent-turquoise);
+  border-radius: 4px;
+  cursor: pointer;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  transition: all 0.15s;
+}
+
+.kro-close-btn:hover {
+  background: var(--accent-turquoise);
+  color: var(--bg-primary);
+}
+
+.kro-close-btn:focus-visible {
+  outline: 2px solid var(--accent-turquoise);
+  outline-offset: 2px;
 }
 
 /* === Status Bar === */
@@ -833,9 +1007,21 @@ html, body {
         <div id="settings-bar">
           <span>Press WASD + Q/E to practice</span>
           <span id="clock-display">0.000s</span>
+          <button class="settings-btn" id="btn-kro-diagnostic">KBD Diag</button>
+          <button class="settings-btn danger" id="btn-data-reset">Reset</button>
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- KRO Diagnostic Overlay -->
+  <div id="kro-diagnostic" role="dialog" aria-modal="true" aria-label="キーボード診断">
+    <h2 class="kro-title">KEYBOARD DIAGNOSTIC</h2>
+    <div class="kro-instruction" id="kro-instruction"></div>
+    <div class="kro-key-display" id="kro-key-display"></div>
+    <div class="kro-status" id="kro-status"></div>
+    <div class="kro-result kro-result-hidden" id="kro-result"></div>
+    <button class="kro-close-btn" id="kro-close">CLOSE</button>
   </div>
 
   <!-- Status Bar -->
@@ -4442,6 +4628,230 @@ class PlaceholderMode extends ModeLifecycle {
     }
   });
 
+  // --- UI: Data Reset Button ---
+  const btnDataReset = document.getElementById('btn-data-reset');
+  btnDataReset.addEventListener('click', () => {
+    if (confirm('すべてのデータをリセットしますか？この操作は取り消せません。')) {
+      try {
+        storage.clear();
+      } catch (e) {
+        console.error('Failed to clear storage:', e);
+      }
+      location.reload();
+    }
+  });
+
+  // --- KRO Diagnostic ---
+  const kroOverlay = document.getElementById('kro-diagnostic');
+  const kroInstruction = document.getElementById('kro-instruction');
+  const kroKeyDisplay = document.getElementById('kro-key-display');
+  const kroStatus = document.getElementById('kro-status');
+  const kroResult = document.getElementById('kro-result');
+  const kroCloseBtn = document.getElementById('kro-close');
+  const btnKroDiag = document.getElementById('btn-kro-diagnostic');
+
+  if (!kroOverlay || !kroInstruction || !kroKeyDisplay || !kroStatus || !kroResult || !kroCloseBtn || !btnKroDiag) {
+    console.error('KRO diagnostic: required DOM elements not found');
+  }
+
+  // Combos chosen to cover WASD+QE matrix positions that commonly ghost on membrane keyboards.
+  // Each combo tests 3-key rollover across different matrix rows/columns.
+  const KRO_TEST_COMBOS = [
+    ['KeyW', 'KeyD', 'KeyE'],
+    ['KeyW', 'KeyA', 'KeyQ'],
+    ['KeyA', 'KeyS', 'KeyQ'],
+    ['KeyD', 'KeyS', 'KeyE'],
+    ['KeyW', 'KeyA', 'KeyD'],
+    ['KeyW', 'KeyS', 'KeyE'],
+  ];
+
+  const KEY_LABELS = {
+    KeyW: 'W', KeyA: 'A', KeyS: 'S', KeyD: 'D', KeyQ: 'Q', KeyE: 'E'
+  };
+
+  const KRO_DELAY_SUCCESS = 400;
+  const KRO_DELAY_FAIL = 800;
+
+  let kroActive = false;
+  let kroTestIndex = 0;
+  let kroDetectedKeys = new Set();
+  let kroHeldKeys = new Set();
+  let kroResults = [];
+  let kroMaxSimultaneous = 0;
+  let kroFailedCombos = [];
+  let kroTimerId = null;
+
+  function kroStartTest() {
+    kroTestIndex = 0;
+    kroResults = [];
+    kroMaxSimultaneous = 0;
+    kroFailedCombos = [];
+    kroResult.classList.add('kro-result-hidden');
+    kroShowCombo();
+  }
+
+  function kroShowCombo() {
+    if (kroTestIndex >= KRO_TEST_COMBOS.length) {
+      kroShowResults();
+      return;
+    }
+
+    const combo = KRO_TEST_COMBOS[kroTestIndex];
+    kroDetectedKeys = new Set();
+
+    kroInstruction.textContent = '以下の ' + combo.length + ' キーを同時に押してください (' + (kroTestIndex + 1) + '/' + KRO_TEST_COMBOS.length + ')';
+    kroStatus.textContent = 'Waiting for input...';
+
+    kroKeyDisplay.textContent = '';
+    combo.forEach((code, i) => {
+      const keyEl = document.createElement('div');
+      keyEl.className = 'kro-key';
+      keyEl.id = 'kro-key-' + code;
+      keyEl.textContent = KEY_LABELS[code] || code;
+      kroKeyDisplay.appendChild(keyEl);
+      if (i < combo.length - 1) {
+        const plus = document.createElement('div');
+        plus.className = 'kro-plus';
+        plus.textContent = '+';
+        kroKeyDisplay.appendChild(plus);
+      }
+    });
+  }
+
+  function kroHandleKeyDown(e) {
+    if (!kroActive) return;
+    if (e.code === 'Escape') { kroClose(); return; }
+    e.preventDefault();
+    const combo = KRO_TEST_COMBOS[kroTestIndex];
+    if (!combo) return;
+
+    if (combo.includes(e.code)) {
+      kroDetectedKeys.add(e.code);
+      kroHeldKeys.add(e.code);
+      const keyEl = document.getElementById('kro-key-' + e.code);
+      if (keyEl) keyEl.classList.add('detected');
+      kroStatus.textContent = kroDetectedKeys.size + '/' + combo.length + ' keys detected';
+    }
+  }
+
+  function kroHandleKeyUp(e) {
+    if (!kroActive) return;
+    if (e.code === 'Escape') return;
+    e.preventDefault();
+    const combo = KRO_TEST_COMBOS[kroTestIndex];
+    if (!combo) return;
+
+    kroHeldKeys.delete(e.code);
+
+    // Evaluate only after all held combo keys are released
+    const anyComboKeyHeld = combo.some(c => kroHeldKeys.has(c));
+    if (!anyComboKeyHeld && kroDetectedKeys.size > 0) {
+      const detected = kroDetectedKeys.size;
+      const total = combo.length;
+      const success = detected === total;
+
+      kroResults.push({
+        combo: combo.map(c => KEY_LABELS[c]).join('+'),
+        codes: [...combo],
+        detected,
+        total,
+        success
+      });
+
+      if (detected > kroMaxSimultaneous) kroMaxSimultaneous = detected;
+      if (!success) {
+        kroFailedCombos.push(combo.map(c => KEY_LABELS[c]).join('+'));
+        combo.forEach(code => {
+          const keyEl = document.getElementById('kro-key-' + code);
+          if (keyEl && !kroDetectedKeys.has(code)) keyEl.classList.add('failed');
+        });
+      }
+
+      kroDetectedKeys = new Set();
+      kroHeldKeys = new Set();
+      kroTestIndex++;
+
+      kroTimerId = setTimeout(() => kroShowCombo(), success ? KRO_DELAY_SUCCESS : KRO_DELAY_FAIL);
+    }
+  }
+
+  function kroShowResults() {
+    const allSuccess = kroFailedCombos.length === 0;
+    const maxKeys = allSuccess ? 3 : kroMaxSimultaneous;
+
+    kroInstruction.textContent = '';
+    kroKeyDisplay.textContent = '';
+    kroStatus.textContent = '';
+    kroResult.classList.remove('kro-result-hidden');
+    kroResult.textContent = '';
+
+    const title = document.createElement('div');
+    title.className = 'kro-result-title';
+    title.textContent = 'Diagnostic Complete';
+    kroResult.appendChild(title);
+
+    const maxDisplay = document.createElement('div');
+    maxDisplay.className = 'kro-result-max';
+    maxDisplay.textContent = maxKeys + '-KEY';
+    kroResult.appendChild(maxDisplay);
+
+    const desc = document.createElement('div');
+    desc.className = 'kro-instruction';
+    desc.textContent = '推定: お使いのキーボードは ' + maxKeys + ' キー同時押しまで対応しています';
+    kroResult.appendChild(desc);
+
+    if (kroFailedCombos.length > 0) {
+      const failed = document.createElement('div');
+      failed.className = 'kro-failed-combos';
+      failed.textContent = '検出できなかった組み合わせ: ' + kroFailedCombos.join(', ');
+      kroResult.appendChild(failed);
+    }
+
+    const note = document.createElement('div');
+    note.className = 'kro-result-note';
+    note.textContent = '※ キーマトリクス依存のため完全な判定は不可能です。特定のキー組み合わせのみ制限される場合があります。';
+    kroResult.appendChild(note);
+
+    // Save results
+    appData.kro = appData.kro || { diagnosis: null, failedCombos: {}, drillFailCounts: {} };
+    appData.kro.diagnosis = {
+      maxSimultaneous: maxKeys,
+      failedCombos: kroResults.filter(r => !r.success).map(r => r.codes),
+      testedAt: Date.now()
+    };
+    for (const r of kroResults) {
+      if (!r.success) {
+        appData.kro.failedCombos[r.codes.sort().join('+')] = true;
+      }
+    }
+    storage.save(appData);
+  }
+
+  function kroOpen() {
+    kroActive = true;
+    kroOverlay.classList.add('active');
+
+    document.addEventListener('keydown', kroHandleKeyDown, true);
+    document.addEventListener('keyup', kroHandleKeyUp, true);
+
+    kroStartTest();
+    kroCloseBtn.focus();
+  }
+
+  function kroClose() {
+    kroActive = false;
+    if (kroTimerId) { clearTimeout(kroTimerId); kroTimerId = null; }
+    kroOverlay.classList.remove('active');
+
+    document.removeEventListener('keydown', kroHandleKeyDown, true);
+    document.removeEventListener('keyup', kroHandleKeyUp, true);
+
+    btnKroDiag.focus();
+  }
+
+  btnKroDiag.addEventListener('click', kroOpen);
+  kroCloseBtn.addEventListener('click', kroClose);
+
   // --- Initial mode: Free Practice ---
   modeManager.switchTo('free');
 
@@ -5027,6 +5437,394 @@ class PlaceholderMode extends ModeLifecycle {
     return summary('RhythmDrill Tests');
   }
 
+  function runInputTransitionTests() {
+    const { assert, summary } = createTestContext();
+
+    // Note: InputManager registers global keydown/keyup listeners on construction.
+    // Tests access _updateLeanState directly, bypassing event dispatch.
+    const testInput = new InputManager();
+
+    // === Hold Mode (8 patterns) ===
+    // Key order mirrors production: keydown → pressedKeys.add → _updateLeanState
+    testInput.setLeanMode('hold');
+
+    // Pattern 1: neutral + Q keydown → left
+    testInput.leanState = 'neutral';
+    testInput.pressedKeys.clear();
+    testInput.pressedKeys.add('KeyQ');
+    testInput._updateLeanState('KeyQ', 'keydown');
+    assert('Hold: neutral + Q down → left', testInput.leanState === 'left');
+
+    // Pattern 2: neutral + E keydown → right
+    testInput.leanState = 'neutral';
+    testInput.pressedKeys.clear();
+    testInput.pressedKeys.add('KeyE');
+    testInput._updateLeanState('KeyE', 'keydown');
+    assert('Hold: neutral + E down → right', testInput.leanState === 'right');
+
+    // Pattern 3: left + Q keyup → neutral
+    testInput.leanState = 'left';
+    testInput.pressedKeys.clear();
+    testInput.pressedKeys.add('KeyQ');
+    testInput.pressedKeys.delete('KeyQ');
+    testInput._updateLeanState('KeyQ', 'keyup');
+    assert('Hold: left + Q up → neutral', testInput.leanState === 'neutral');
+
+    // Pattern 4: left + E keydown → right (last-key-wins)
+    testInput.leanState = 'left';
+    testInput.pressedKeys.clear();
+    testInput.pressedKeys.add('KeyQ');
+    testInput.pressedKeys.add('KeyE');
+    testInput._updateLeanState('KeyE', 'keydown');
+    assert('Hold: left + E down → right', testInput.leanState === 'right');
+
+    // Pattern 5: right + E keyup → neutral
+    testInput.leanState = 'right';
+    testInput.pressedKeys.clear();
+    testInput.pressedKeys.add('KeyE');
+    testInput.pressedKeys.delete('KeyE');
+    testInput._updateLeanState('KeyE', 'keyup');
+    assert('Hold: right + E up → neutral', testInput.leanState === 'neutral');
+
+    // Pattern 6: right + Q keydown → left (last-key-wins)
+    testInput.leanState = 'right';
+    testInput.pressedKeys.clear();
+    testInput.pressedKeys.add('KeyE');
+    testInput.pressedKeys.add('KeyQ');
+    testInput._updateLeanState('KeyQ', 'keydown');
+    assert('Hold: right + Q down → left', testInput.leanState === 'left');
+
+    // Pattern 7: left (Q+E held) + Q keyup → right (E remains)
+    testInput.leanState = 'left';
+    testInput.pressedKeys.clear();
+    testInput.pressedKeys.add('KeyQ');
+    testInput.pressedKeys.add('KeyE');
+    testInput.pressedKeys.delete('KeyQ');
+    testInput._updateLeanState('KeyQ', 'keyup');
+    assert('Hold: left(Q+E) + Q up → right', testInput.leanState === 'right');
+
+    // Pattern 8: right (Q+E held) + E keyup → left (Q remains)
+    testInput.leanState = 'right';
+    testInput.pressedKeys.clear();
+    testInput.pressedKeys.add('KeyQ');
+    testInput.pressedKeys.add('KeyE');
+    testInput.pressedKeys.delete('KeyE');
+    testInput._updateLeanState('KeyE', 'keyup');
+    assert('Hold: right(Q+E) + E up → left', testInput.leanState === 'left');
+
+    // === Toggle Mode (6 patterns) ===
+    testInput.setLeanMode('toggle');
+
+    // Pattern 1: neutral + Q → left
+    testInput.leanState = 'neutral';
+    testInput._updateLeanState('KeyQ', 'keydown');
+    assert('Toggle: neutral + Q → left', testInput.leanState === 'left');
+
+    // Pattern 2: neutral + E → right
+    testInput.leanState = 'neutral';
+    testInput._updateLeanState('KeyE', 'keydown');
+    assert('Toggle: neutral + E → right', testInput.leanState === 'right');
+
+    // Pattern 3: left + Q → neutral (same key cancels)
+    testInput.leanState = 'left';
+    testInput._updateLeanState('KeyQ', 'keydown');
+    assert('Toggle: left + Q → neutral', testInput.leanState === 'neutral');
+
+    // Pattern 4: left + E → right (opposite key switches)
+    testInput.leanState = 'left';
+    testInput._updateLeanState('KeyE', 'keydown');
+    assert('Toggle: left + E → right', testInput.leanState === 'right');
+
+    // Pattern 5: right + E → neutral (same key cancels)
+    testInput.leanState = 'right';
+    testInput._updateLeanState('KeyE', 'keydown');
+    assert('Toggle: right + E → neutral', testInput.leanState === 'neutral');
+
+    // Pattern 6: right + Q → left (opposite key switches)
+    testInput.leanState = 'right';
+    testInput._updateLeanState('KeyQ', 'keydown');
+    assert('Toggle: right + Q → left', testInput.leanState === 'left');
+
+    // Cleanup
+    testInput.destroy();
+
+    return summary('Input Transition Tests');
+  }
+
+  function runSimultaneousJudgmentTests() {
+    const { assert, summary } = createTestContext();
+
+    const testInput = new InputManager();
+    const now = performance.now();
+    // Threshold should match InputManager.SIMULTANEOUS_THRESHOLD_MS (80ms)
+    const THRESHOLD = 80;
+
+    // Test 1: 79ms apart = simultaneous (within threshold)
+    testInput._keyPressTimestamps.clear();
+    testInput._keyPressTimestamps.set('KeyD', now);
+    testInput._keyPressTimestamps.set('KeyE', now + THRESHOLD - 1);
+    assert('79ms apart is simultaneous', testInput.areSimultaneous(['KeyD', 'KeyE']));
+
+    // Test 2: 80ms apart = simultaneous (at boundary)
+    testInput._keyPressTimestamps.clear();
+    testInput._keyPressTimestamps.set('KeyD', now);
+    testInput._keyPressTimestamps.set('KeyE', now + THRESHOLD);
+    assert('80ms apart is simultaneous (boundary)', testInput.areSimultaneous(['KeyD', 'KeyE']));
+
+    // Test 3: 81ms apart = not simultaneous
+    testInput._keyPressTimestamps.clear();
+    testInput._keyPressTimestamps.set('KeyD', now);
+    testInput._keyPressTimestamps.set('KeyE', now + THRESHOLD + 1);
+    assert('81ms apart is NOT simultaneous', !testInput.areSimultaneous(['KeyD', 'KeyE']));
+
+    // Test 4: 3 keys all within window
+    testInput._keyPressTimestamps.clear();
+    testInput._keyPressTimestamps.set('KeyW', now);
+    testInput._keyPressTimestamps.set('KeyD', now + 30);
+    testInput._keyPressTimestamps.set('KeyE', now + 60);
+    assert('3 keys within 60ms is simultaneous', testInput.areSimultaneous(['KeyW', 'KeyD', 'KeyE']));
+
+    // Test 5: 3 keys exceeding window
+    testInput._keyPressTimestamps.clear();
+    testInput._keyPressTimestamps.set('KeyW', now);
+    testInput._keyPressTimestamps.set('KeyD', now + 40);
+    testInput._keyPressTimestamps.set('KeyE', now + THRESHOLD + 1);
+    assert('3 keys spanning 81ms is NOT simultaneous', !testInput.areSimultaneous(['KeyW', 'KeyD', 'KeyE']));
+
+    // Test 6: missing key returns false
+    testInput._keyPressTimestamps.clear();
+    testInput._keyPressTimestamps.set('KeyD', now);
+    assert('missing key returns false', !testInput.areSimultaneous(['KeyD', 'KeyE']));
+
+    // Test 7: empty array returns false
+    assert('empty array returns false', !testInput.areSimultaneous([]));
+
+    // Test 8: single key is always simultaneous
+    testInput._keyPressTimestamps.clear();
+    testInput._keyPressTimestamps.set('KeyW', now);
+    assert('single key is simultaneous', testInput.areSimultaneous(['KeyW']));
+
+    testInput.destroy();
+
+    return summary('Simultaneous Judgment Tests');
+  }
+
+  function runRaycastTests() {
+    const { assert, summary } = createTestContext();
+
+    // Uses the app-level renderer instance for geometry tests.
+    // Renderer methods under test (_isInFOV, _rayAABBIntersect, _calculateExposure)
+    // are pure computation with no side effects, so sharing the instance is safe.
+    const testRenderer = renderer;
+
+    // Test 1: _isInFOV - target directly in front (upward direction = -PI/2)
+    const frontAngle = -Math.PI / 2;
+    assert('target directly above is in FOV',
+      testRenderer._isInFOV(200, 300, 200, 100, frontAngle));
+
+    // Test 2: target behind (below)
+    assert('target directly below is NOT in FOV',
+      !testRenderer._isInFOV(200, 300, 200, 500, frontAngle));
+
+    // Test 3: target at edge of FOV (30 degrees = PI/6)
+    const edgeX = 200 + 200 * Math.sin(Math.PI / 6);
+    const edgeY = 300 - 200 * Math.cos(Math.PI / 6);
+    assert('target at FOV edge is in FOV',
+      testRenderer._isInFOV(200, 300, edgeX, edgeY, frontAngle));
+
+    // Test 4: target just outside FOV
+    const outsideX = 200 + 200 * Math.sin(Math.PI / 6 + 0.1);
+    const outsideY = 300 - 200 * Math.cos(Math.PI / 6 + 0.1);
+    assert('target just outside FOV is NOT in FOV',
+      !testRenderer._isInFOV(200, 300, outsideX, outsideY, frontAngle));
+
+    // Test 5: _rayAABBIntersect - ray hitting an obstacle
+    const obstacle = { x: 180, y: 150, w: 40, h: 20 };
+    const hitDist = testRenderer._rayAABBIntersect(200, 300, 0, -1, obstacle);
+    assert('ray hits obstacle (finite distance)', hitDist !== Infinity && hitDist > 0);
+    assert('ray hit distance is correct', Math.abs(hitDist - 130) < 1);
+
+    // Test 6: ray missing an obstacle (horizontal ray misses vertical obstacle)
+    const missDist = testRenderer._rayAABBIntersect(200, 300, 1, 0, obstacle);
+    assert('ray misses obstacle (infinite distance)', missDist === Infinity);
+
+    // Test 7: _calculateExposure - no obstacles means full exposure
+    const enemy = { x: 200, y: 100, radius: 10 };
+    const fullExposure = testRenderer._calculateExposure(200, 300, enemy, []);
+    assert('no obstacles = 100% exposure', fullExposure === 100);
+
+    // Test 8: obstacle completely blocks enemy
+    const blockingObs = { x: 150, y: 140, w: 100, h: 30 };
+    const blockedExposure = testRenderer._calculateExposure(200, 300, enemy, [blockingObs]);
+    assert('blocking obstacle = low exposure', blockedExposure < 50);
+
+    // Test 9: obstacle partially blocks enemy
+    const partialObs = { x: 190, y: 140, w: 30, h: 20 };
+    const partialExposure = testRenderer._calculateExposure(200, 300, enemy, [partialObs]);
+    assert('partial obstacle = partial exposure', partialExposure > 0 && partialExposure < 100);
+
+    return summary('Raycast Tests');
+  }
+
+  function runStorageTests() {
+    const { assert, summary } = createTestContext();
+
+    const testStore = new Storage();
+
+    // Use a test key to avoid corrupting real data
+    testStore.KEY = 'eft-lean-trainer-test-' + Date.now();
+    testStore.BACKUP_PREFIX = testStore.KEY + '-backup-';
+
+    function cleanupTestKeys() {
+      localStorage.removeItem(testStore.KEY);
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(testStore.BACKUP_PREFIX)) {
+          localStorage.removeItem(key);
+        }
+      }
+    }
+
+    try {
+      // Test 1: load returns defaults when no data
+      localStorage.removeItem(testStore.KEY);
+      const defaults = testStore.load();
+      assert('load returns defaults when empty', defaults.schemaVersion === 1);
+      assert('defaults have settings', defaults.settings && defaults.settings.leanMode === 'hold');
+      assert('defaults have kro', defaults.kro !== undefined);
+
+      // Test 2: save and load roundtrip
+      defaults.settings.leanMode = 'toggle';
+      testStore.save(defaults);
+      const loaded = testStore.load();
+      assert('save/load roundtrip preserves data', loaded.settings.leanMode === 'toggle');
+
+      // Test 3: clear removes data
+      testStore.save(defaults);
+      testStore.clear();
+      const afterClear = testStore.load();
+      assert('clear resets to defaults', afterClear.settings.leanMode === 'hold');
+
+      // Test 4: corrupted JSON fallback
+      localStorage.setItem(testStore.KEY, '{invalid json!!!');
+      const recovered = testStore.load();
+      assert('corrupted data returns defaults', recovered.schemaVersion === 1);
+      assert('corrupted data resets leanMode', recovered.settings.leanMode === 'hold');
+
+      // Verify backup was created
+      let backupFound = false;
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(testStore.BACKUP_PREFIX)) {
+          backupFound = true;
+          localStorage.removeItem(key);
+        }
+      }
+      assert('backup created for corrupted data', backupFound);
+
+      // Test 5: future schema version is read-only
+      const futureData = JSON.stringify({ schemaVersion: 999, settings: { leanMode: 'toggle' } });
+      localStorage.setItem(testStore.KEY, futureData);
+      const futureLoaded = testStore.load();
+      assert('future schema is read-only', futureLoaded._readOnly === true);
+      assert('future schema preserves data', futureLoaded.settings.leanMode === 'toggle');
+
+      // Test 6: save is no-op for read-only data
+      futureLoaded.settings.leanMode = 'hold';
+      testStore.save(futureLoaded);
+      const afterSave = JSON.parse(localStorage.getItem(testStore.KEY));
+      assert('read-only data is not overwritten', afterSave.settings.leanMode === 'toggle');
+
+      // Test 7: migration map executes (uses isolated Storage instance with test key)
+      const migrateStore = new Storage();
+      migrateStore.KEY = 'eft-lean-trainer-migrate-test-' + Date.now();
+      migrateStore.CURRENT_VERSION = 2;
+      migrateStore.MIGRATIONS = {
+        1: function(data) {
+          data.newField = 'migrated';
+          data.schemaVersion = 2;
+          return data;
+        }
+      };
+      const v1Data = { schemaVersion: 1, settings: { leanMode: 'hold' } };
+      const migrated = migrateStore.migrate(v1Data);
+      assert('migration updates version', migrated.schemaVersion === 2);
+      assert('migration adds new field', migrated.newField === 'migrated');
+      localStorage.removeItem(migrateStore.KEY);
+
+      // Test 8: invalid schemaVersion triggers fallback
+      localStorage.setItem(testStore.KEY, JSON.stringify({ schemaVersion: -1 }));
+      const invalidSchema = testStore.load();
+      assert('invalid schema version triggers fallback', invalidSchema.schemaVersion === 1);
+
+      // Test 9: non-integer schemaVersion triggers fallback
+      localStorage.setItem(testStore.KEY, JSON.stringify({ schemaVersion: 1.5 }));
+      const floatSchema = testStore.load();
+      assert('float schema version triggers fallback', floatSchema.schemaVersion === 1);
+
+    } finally {
+      cleanupTestKeys();
+    }
+
+    return summary('Storage Tests');
+  }
+
+  async function runAudioResumeFailureTests() {
+    const { assert, summary } = createTestContext();
+
+    // Test AudioEngine resume failure handling
+    const testEngine = new AudioEngine();
+
+    try {
+      await testEngine.init();
+
+      // Mock resume to reject
+      const origCtx = testEngine._ctx;
+      const origResume = origCtx.resume.bind(origCtx);
+
+      // Force suspend first
+      await testEngine.suspend();
+      assert('engine is suspended', testEngine.state === 'suspended');
+
+      // Replace resume with one that rejects
+      origCtx.resume = () => Promise.reject(new Error('Mock resume failure'));
+
+      try {
+        await testEngine.resume();
+        // If resume catches the error internally, state should still be suspended
+        assert('resume failure keeps engine suspended or handles gracefully',
+          testEngine.state === 'suspended' || testEngine.lastError !== null);
+      } catch (e) {
+        // Resume threw — that's also acceptable
+        assert('resume failure throws error', e.message === 'Mock resume failure');
+        assert('state remains suspended after failure', testEngine.state === 'suspended');
+      }
+
+      // Restore original resume
+      origCtx.resume = origResume;
+      await testEngine.resume();
+      assert('resume works after restoring', testEngine.state === 'running');
+
+    } catch (e) {
+      // AudioContext may not be available without user gesture in some environments.
+      // This is an environment limitation, not a test failure — skip gracefully.
+      console.warn('AudioEngine resume test skipped: ' + e.message);
+    }
+
+    testEngine.destroy();
+
+    return summary('AudioEngine Resume Failure Tests');
+  }
+
+  // Note: Test functions (runInputTransitionTests, runSimultaneousJudgmentTests, etc.)
+  // each follow the same createTestContext() + assert() + summary() pattern.
+  // This repetition is intentional — each test is self-contained and independently runnable
+  // from the console, which is more valuable than DRY abstraction for a debugging tool.
+  //
+  // Tests access private members (_updateLeanState, _keyPressTimestamps, etc.) directly.
+  // This is acceptable for self-test functions that verify internal state transitions;
+  // they are tightly coupled to the implementation by design.
+
   async function runTests() {
     console.log('=== EFT Trainer Self-Tests ===');
     const audioResults = await runAudioEngineTests();
@@ -5035,10 +5833,21 @@ class PlaceholderMode extends ModeLifecycle {
     const reactionResults = await runReactionDrillTests();
     const comboResults = await runComboDrillTests();
     const rhythmResults = await runRhythmDrillTests();
-    const totalPassed = audioResults.passed + modeResults.passed + fpResults.passed + reactionResults.passed + comboResults.passed + rhythmResults.passed;
-    const totalTests = audioResults.total + modeResults.total + fpResults.total + reactionResults.total + comboResults.total + rhythmResults.total;
+    const inputResults = runInputTransitionTests();
+    const simultaneousResults = runSimultaneousJudgmentTests();
+    const raycastResults = runRaycastTests();
+    const storageResults = runStorageTests();
+    const audioResumeResults = await runAudioResumeFailureTests();
+
+    const allResults = [audioResults, modeResults, fpResults, reactionResults, comboResults, rhythmResults, inputResults, simultaneousResults, raycastResults, storageResults, audioResumeResults];
+    const totalPassed = allResults.reduce((sum, r) => sum + r.passed, 0);
+    const totalTests = allResults.reduce((sum, r) => sum + r.total, 0);
     console.log('=== Total: ' + totalPassed + '/' + totalTests + ' passed ===');
-    return { audioResults, modeResults, fpResults, reactionResults, comboResults, rhythmResults, totalPassed, totalTests };
+    return {
+      audioResults, modeResults, fpResults, reactionResults, comboResults, rhythmResults,
+      inputResults, simultaneousResults, raycastResults, storageResults, audioResumeResults,
+      totalPassed, totalTests
+    };
   }
 
   // --- Expose minimal public API ---

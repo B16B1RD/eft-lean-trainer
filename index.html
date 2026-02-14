@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
 <title>EFT Lean Trainer</title>
 <style>
 /* === Reset & Base === */
@@ -1226,6 +1227,7 @@ class ModeLifecycle {
     this._timers = [];      // setTimeout/setInterval IDs
     this._rafs = [];        // requestAnimationFrame IDs
     this._eventBindings = []; // { target, event, handler, options }
+    this._disposables = [];   // cleanup callbacks for non-DOM resources
   }
 
   get state() { return this._state; }
@@ -1255,6 +1257,10 @@ class ModeLifecycle {
   }
 
   dispose() {
+    // Run custom disposables (non-DOM resource cleanup)
+    for (const fn of this._disposables) fn();
+    this._disposables.length = 0;
+
     // Clear all timers
     for (const id of this._timers) {
       clearTimeout(id);
@@ -1303,17 +1309,24 @@ class ModeLifecycle {
     return id;
   }
 
-  _addEventListener(target, event, handler, options) {
+  _addEventListener(target, event, handler, options = undefined) {
     target.addEventListener(event, handler, options);
     this._eventBindings.push({ target, event, handler, options });
   }
 
+  /** Register a cleanup callback invoked on dispose(). Use for non-DOM resources (e.g. EventEmitter listeners). */
+  _addDisposable(fn) {
+    this._disposables.push(fn);
+  }
+
+  /** Remove a tracked timer by ID. Available for subclasses that need mid-lifecycle cleanup. */
   _clearTimer(id) {
     clearTimeout(id);
     clearInterval(id);
     this._timers = this._timers.filter(t => t !== id);
   }
 
+  /** Cancel a tracked RAF by ID. Available for subclasses that need mid-lifecycle cleanup. */
   _cancelRAF(id) {
     cancelAnimationFrame(id);
     this._rafs = this._rafs.filter(r => r !== id);
@@ -1373,6 +1386,14 @@ class ModeManager {
       await this._audioEngine.suspend();
     } catch (e) {
       console.warn('[ModeManager] AudioEngine suspend failed:', e);
+      const panel = document.getElementById('drill-panel');
+      if (panel) {
+        const warn = document.createElement('div');
+        warn.textContent = 'Audio suspend failed – sound may overlap';
+        warn.style.cssText = 'color:#e94560;text-align:center;padding:4px;font-size:0.8em';
+        panel.prepend(warn);
+        setTimeout(() => warn.remove(), 3000);
+      }
     }
 
     // 4. enter new mode
@@ -1400,7 +1421,7 @@ class FreePracticeMode extends ModeLifecycle {
     this._inputManager = inputManager;
     this._clock = clock;
     this._loopId = null;
-    this._dirty = true;
+    this._needsRender = true;
     this._lastLeanState = 'neutral';
 
     this._scene = {
@@ -1414,46 +1435,41 @@ class FreePracticeMode extends ModeLifecycle {
   enter() {
     super.enter();
     this._buildScene();
-    this._dirty = true;
+    this._needsRender = true;
     this._lastLeanState = this._inputManager.leanState;
     this._scene.leanState = this._lastLeanState;
 
     // Start render loop
     this._startLoop();
 
-    // Listen for lean changes
+    // Listen for lean changes (tracked via _addDisposable for unified cleanup)
     this._onLeanChange = (data) => {
       this._scene.leanState = data.newState;
-      this._dirty = true;
+      this._needsRender = true;
     };
     this._inputManager.on('leanchange', this._onLeanChange);
+    this._addDisposable(() => {
+      this._inputManager.off('leanchange', this._onLeanChange);
+      this._onLeanChange = null;
+    });
 
-    // Listen for resize
+    // Listen for resize (tracked via _addEventListener for auto-cleanup)
     this._onResize = () => {
       this._renderer.resize();
       this._buildScene();
-      this._dirty = true;
+      this._needsRender = true;
     };
     this._addEventListener(window, 'resize', this._onResize);
   }
 
   dispose() {
     // Stop render loop
-    if (this._loopId != null) {
+    if (this._loopId !== null) {
       this._cancelRAF(this._loopId);
       this._loopId = null;
     }
 
-    // Remove InputManager listener
-    if (this._onLeanChange) {
-      this._inputManager.off('leanchange', this._onLeanChange);
-      this._onLeanChange = null;
-    }
-
-    if (this._onResize) {
-      this._onResize = null;
-    }
-
+    // All listeners (InputManager + DOM) are cleaned up by super.dispose()
     super.dispose();
   }
 
@@ -1482,11 +1498,11 @@ class FreePracticeMode extends ModeLifecycle {
       if (currentLean !== this._lastLeanState) {
         this._lastLeanState = currentLean;
         this._scene.leanState = currentLean;
-        this._dirty = true;
+        this._needsRender = true;
       }
-      if (this._dirty) {
+      if (this._needsRender) {
         this._renderer.render(this._scene);
-        this._dirty = false;
+        this._needsRender = false;
       }
       this._loopId = this._addRAF(loop);
     };
@@ -1508,7 +1524,11 @@ class PlaceholderMode extends ModeLifecycle {
     super.enter();
     this._drillPanel = document.getElementById('drill-panel');
     if (this._drillPanel) {
-      this._drillPanel.innerHTML = '<div class="placeholder">' + this._displayName + ' — COMING SOON</div>';
+      this._drillPanel.textContent = '';
+      const div = document.createElement('div');
+      div.className = 'placeholder';
+      div.textContent = this._displayName + ' — COMING SOON';
+      this._drillPanel.appendChild(div);
     }
   }
 
@@ -1663,12 +1683,23 @@ class PlaceholderMode extends ModeLifecycle {
   modeManager.switchTo('free');
 
   // --- Self-test functions (dev mode) ---
-  async function runAudioEngineTests() {
+  function createTestContext() {
     const results = [];
     function assert(name, condition) {
       results.push({ name, pass: !!condition });
       console.log(condition ? '[PASS]' : '[FAIL]', name);
     }
+    function summary(label) {
+      const passed = results.filter(r => r.pass).length;
+      const total = results.length;
+      console.log('--- ' + label + ': ' + passed + '/' + total + ' passed ---');
+      return { passed, total, results };
+    }
+    return { results, assert, summary };
+  }
+
+  async function runAudioEngineTests() {
+    const { assert, summary } = createTestContext();
 
     // Test 1: Initial state
     const testEngine = new AudioEngine();
@@ -1743,18 +1774,11 @@ class PlaceholderMode extends ModeLifecycle {
     }
     uninitEngine.destroy();
 
-    const passed = results.filter(r => r.pass).length;
-    const total = results.length;
-    console.log('--- AudioEngine Tests: ' + passed + '/' + total + ' passed ---');
-    return { passed, total, results };
+    return summary('AudioEngine Tests');
   }
 
   async function runModeLifecycleTests() {
-    const results = [];
-    function assert(name, condition) {
-      results.push({ name, pass: !!condition });
-      console.log(condition ? '[PASS]' : '[FAIL]', name);
-    }
+    const { assert, summary } = createTestContext();
 
     // --- State transition tests ---
     const mode = new ModeLifecycle('test');
@@ -1898,10 +1922,7 @@ class PlaceholderMode extends ModeLifecycle {
     // Restore original mode
     await modeManager.switchTo('free');
 
-    const passed = results.filter(r => r.pass).length;
-    const total = results.length;
-    console.log('--- ModeLifecycle Tests: ' + passed + '/' + total + ' passed ---');
-    return { passed, total, results };
+    return summary('ModeLifecycle Tests');
   }
 
   async function runTests() {
@@ -1914,18 +1935,10 @@ class PlaceholderMode extends ModeLifecycle {
     return { audioResults, modeResults, totalPassed, totalTests };
   }
 
-  // --- Expose for other modules and testing ---
+  // --- Expose minimal public API ---
   window.EFTTrainer = Object.freeze({
-    clock,
-    input,
-    storage,
-    appData,
-    renderer,
-    audioEngine,
     modeManager,
     runTests,
-    runAudioEngineTests,
-    runModeLifecycleTests,
     destroy() {
       if (modeManager.currentMode) {
         modeManager.currentMode.dispose();

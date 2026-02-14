@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
 <title>EFT Lean Trainer</title>
 <style>
 /* === Reset & Base === */
@@ -1217,10 +1218,330 @@ class AudioEngine {
 }
 
 // ============================================================
+// ModeLifecycle — Base class for all practice modes
+// ============================================================
+class ModeLifecycle {
+  constructor(name) {
+    this.name = name;
+    this._state = 'idle'; // idle | running | paused | result
+    this._timers = [];      // setTimeout/setInterval IDs
+    this._rafs = [];        // requestAnimationFrame IDs
+    this._eventBindings = []; // { target, event, handler, options }
+    this._disposables = [];   // cleanup callbacks for non-DOM resources
+  }
+
+  get state() { return this._state; }
+
+  enter() {
+    this._state = 'idle';
+  }
+
+  start() {
+    if (this._state !== 'idle' && this._state !== 'result') return;
+    this._state = 'running';
+  }
+
+  pause() {
+    if (this._state !== 'running') return;
+    this._state = 'paused';
+  }
+
+  resume() {
+    if (this._state !== 'paused') return;
+    this._state = 'running';
+  }
+
+  stop() {
+    if (this._state !== 'running' && this._state !== 'paused') return;
+    this._state = 'result';
+  }
+
+  dispose() {
+    // Run custom disposables (non-DOM resource cleanup)
+    for (const fn of this._disposables) fn();
+    this._disposables.length = 0;
+
+    // Clear all timers
+    for (const id of this._timers) {
+      clearTimeout(id);
+      clearInterval(id);
+    }
+    this._timers.length = 0;
+
+    // Cancel all animation frames
+    for (const id of this._rafs) {
+      cancelAnimationFrame(id);
+    }
+    this._rafs.length = 0;
+
+    // Remove all event listeners
+    for (const binding of this._eventBindings) {
+      binding.target.removeEventListener(binding.event, binding.handler, binding.options);
+    }
+    this._eventBindings.length = 0;
+
+    this._state = 'idle';
+  }
+
+  // --- Resource tracking helpers ---
+
+  _addTimeout(callback, delay) {
+    const id = setTimeout(() => {
+      this._timers = this._timers.filter(t => t !== id);
+      callback();
+    }, delay);
+    this._timers.push(id);
+    return id;
+  }
+
+  _addInterval(callback, delay) {
+    const id = setInterval(callback, delay);
+    this._timers.push(id);
+    return id;
+  }
+
+  _addRAF(callback) {
+    const id = requestAnimationFrame((ts) => {
+      this._rafs = this._rafs.filter(r => r !== id);
+      callback(ts);
+    });
+    this._rafs.push(id);
+    return id;
+  }
+
+  _addEventListener(target, event, handler, options = undefined) {
+    target.addEventListener(event, handler, options);
+    this._eventBindings.push({ target, event, handler, options });
+  }
+
+  /** Register a cleanup callback invoked on dispose(). Use for non-DOM resources (e.g. EventEmitter listeners). */
+  _addDisposable(fn) {
+    this._disposables.push(fn);
+  }
+
+  /** Remove a tracked timer by ID. Available for subclasses that need mid-lifecycle cleanup. */
+  _clearTimer(id) {
+    clearTimeout(id);
+    clearInterval(id);
+    this._timers = this._timers.filter(t => t !== id);
+  }
+
+  /** Cancel a tracked RAF by ID. Available for subclasses that need mid-lifecycle cleanup. */
+  _cancelRAF(id) {
+    cancelAnimationFrame(id);
+    this._rafs = this._rafs.filter(r => r !== id);
+  }
+
+  // --- Debug info ---
+
+  _getResourceCounts() {
+    return {
+      timers: this._timers.length,
+      rafs: this._rafs.length,
+      listeners: this._eventBindings.length
+    };
+  }
+}
+
+// ============================================================
+// ModeManager — Mode switching orchestrator
+// ============================================================
+class ModeManager {
+  constructor(inputManager, audioEngine) {
+    this._inputManager = inputManager;
+    this._audioEngine = audioEngine;
+    this._modes = {};       // name -> ModeLifecycle instance
+    this._currentMode = null;
+    this._currentModeName = null;
+  }
+
+  register(name, mode) {
+    if (!(mode instanceof ModeLifecycle)) {
+      throw new Error('Mode must extend ModeLifecycle');
+    }
+    this._modes[name] = mode;
+  }
+
+  get currentMode() { return this._currentMode; }
+  get currentModeName() { return this._currentModeName; }
+
+  async switchTo(name) {
+    const nextMode = this._modes[name];
+    if (!nextMode) {
+      throw new Error('Unknown mode: ' + name);
+    }
+
+    if (this._currentMode === nextMode) return;
+
+    // 1. dispose current mode (releases mode-specific resources)
+    if (this._currentMode) {
+      this._currentMode.dispose();
+    }
+
+    // 2. reset input state (clear key presses & lean)
+    this._inputManager.resetState();
+
+    // 3. suspend audio (stop sound, don't destroy)
+    try {
+      await this._audioEngine.suspend();
+    } catch (e) {
+      console.warn('[ModeManager] AudioEngine suspend failed:', e);
+      const panel = document.getElementById('drill-panel');
+      if (panel) {
+        const warn = document.createElement('div');
+        warn.textContent = 'Audio suspend failed – sound may overlap';
+        warn.style.cssText = 'color:#e94560;text-align:center;padding:4px;font-size:0.8em';
+        panel.prepend(warn);
+        setTimeout(() => warn.remove(), 3000);
+      }
+    }
+
+    // 4. enter new mode
+    this._currentMode = nextMode;
+    this._currentModeName = name;
+    nextMode.enter();
+  }
+
+  getMode(name) {
+    return this._modes[name] || null;
+  }
+
+  getModeNames() {
+    return Object.keys(this._modes);
+  }
+}
+
+// ============================================================
+// FreePracticeMode — Free practice with real-time lean display
+// ============================================================
+class FreePracticeMode extends ModeLifecycle {
+  constructor(renderer, inputManager, clock) {
+    super('free');
+    this._renderer = renderer;
+    this._inputManager = inputManager;
+    this._clock = clock;
+    this._loopId = null;
+    this._needsRender = true;
+    this._lastLeanState = 'neutral';
+
+    this._scene = {
+      character: { x: 0, y: 0 },
+      leanState: 'neutral',
+      obstacles: [],
+      enemies: []
+    };
+  }
+
+  enter() {
+    super.enter();
+    this._buildScene();
+    this._needsRender = true;
+    this._lastLeanState = this._inputManager.leanState;
+    this._scene.leanState = this._lastLeanState;
+
+    // Start render loop
+    this._startLoop();
+
+    // Listen for lean changes (tracked via _addDisposable for unified cleanup)
+    this._onLeanChange = (data) => {
+      this._scene.leanState = data.newState;
+      this._needsRender = true;
+    };
+    this._inputManager.on('leanchange', this._onLeanChange);
+    this._addDisposable(() => {
+      this._inputManager.off('leanchange', this._onLeanChange);
+      this._onLeanChange = null;
+    });
+
+    // Listen for resize (tracked via _addEventListener for auto-cleanup)
+    this._onResize = () => {
+      this._renderer.resize();
+      this._buildScene();
+      this._needsRender = true;
+    };
+    this._addEventListener(window, 'resize', this._onResize);
+  }
+
+  dispose() {
+    // Stop render loop
+    if (this._loopId !== null) {
+      this._cancelRAF(this._loopId);
+      this._loopId = null;
+    }
+
+    // All listeners (InputManager + DOM) are cleaned up by super.dispose()
+    super.dispose();
+  }
+
+  _buildScene() {
+    const cx = this._renderer.width / 2;
+    const cy = this._renderer.height * 0.65;
+
+    this._scene.character.x = cx;
+    this._scene.character.y = cy;
+
+    this._scene.obstacles = [
+      { x: cx - 50, y: cy - 120, w: 100, h: 15 },
+      { x: cx - 50, y: cy - 200, w: 15, h: 80 },
+      { x: cx + 80, y: cy - 180, w: 15, h: 100 },
+    ];
+
+    this._scene.enemies = [
+      { x: cx + 40, y: cy - 220, radius: 10 },
+      { x: cx - 80, y: cy - 250, radius: 10 },
+    ];
+  }
+
+  _startLoop() {
+    const loop = () => {
+      const currentLean = this._inputManager.leanState;
+      if (currentLean !== this._lastLeanState) {
+        this._lastLeanState = currentLean;
+        this._scene.leanState = currentLean;
+        this._needsRender = true;
+      }
+      if (this._needsRender) {
+        this._renderer.render(this._scene);
+        this._needsRender = false;
+      }
+      this._loopId = this._addRAF(loop);
+    };
+    this._loopId = this._addRAF(loop);
+  }
+}
+
+// ============================================================
+// PlaceholderMode — Stub for unimplemented modes
+// ============================================================
+class PlaceholderMode extends ModeLifecycle {
+  constructor(name, displayName) {
+    super(name);
+    this._displayName = displayName;
+    this._drillPanel = null;
+  }
+
+  enter() {
+    super.enter();
+    this._drillPanel = document.getElementById('drill-panel');
+    if (this._drillPanel) {
+      this._drillPanel.textContent = '';
+      const div = document.createElement('div');
+      div.className = 'placeholder';
+      div.textContent = this._displayName + ' — COMING SOON';
+      this._drillPanel.appendChild(div);
+    }
+  }
+
+  dispose() {
+    super.dispose();
+  }
+}
+
+// ============================================================
 // App Initialization
 // ============================================================
 (function() {
-  let clock, input, storage, appData, renderer, audioEngine;
+  let clock, input, storage, appData, renderer, audioEngine, modeManager;
   try {
     clock = new GameClock();
     input = new InputManager();
@@ -1228,6 +1549,7 @@ class AudioEngine {
     appData = storage.load();
     renderer = new Renderer(document.getElementById('game-canvas'));
     audioEngine = new AudioEngine();
+    modeManager = new ModeManager(input, audioEngine);
   } catch (initError) {
     console.error('[App] Initialization failed:', initError);
     const banner = document.getElementById('warning-banner');
@@ -1307,9 +1629,21 @@ class AudioEngine {
     }
   });
 
+  // --- Register Modes ---
+  const freeMode = new FreePracticeMode(renderer, input, clock);
+  const reactionMode = new PlaceholderMode('reaction', 'Key Reaction Drill');
+  const comboMode = new PlaceholderMode('combo', 'Combo Drill');
+  const rhythmMode = new PlaceholderMode('rhythm', 'Rhythm Drill');
+
+  modeManager.register('free', freeMode);
+  modeManager.register('reaction', reactionMode);
+  modeManager.register('combo', comboMode);
+  modeManager.register('rhythm', rhythmMode);
+
   // --- UI: Mode Select ---
   const modeSelect = document.getElementById('mode-select');
   const statusMode = document.getElementById('status-mode');
+  const drillPanel = document.getElementById('drill-panel');
   const modeLabels = {
     free: 'Free Practice',
     reaction: 'Key Reaction',
@@ -1318,82 +1652,54 @@ class AudioEngine {
   };
 
   modeSelect.addEventListener('change', () => {
-    statusMode.textContent = 'Mode: ' + (modeLabels[modeSelect.value] || modeSelect.value);
+    const modeName = modeSelect.value;
+    statusMode.textContent = 'Mode: ' + (modeLabels[modeName] || modeName);
+    modeManager.switchTo(modeName);
   });
 
-  // --- Canvas Resize ---
-  let resizeTimer = null;
+  // --- Canvas Resize & Clock ---
   renderer.resize();
 
-  // --- Demo Scene (Free Practice default) ---
-  const demoState = {
-    character: { x: 0, y: 0 },
-    leanState: 'neutral',
-    obstacles: [],
-    enemies: []
-  };
-
-  function buildDemoScene() {
-    const cx = renderer.width / 2;
-    const cy = renderer.height * 0.65;
-
-    demoState.character.x = cx;
-    demoState.character.y = cy;
-
-    // L-shaped cover: horizontal wall + vertical wall
-    demoState.obstacles = [
-      { x: cx - 50, y: cy - 120, w: 100, h: 15 },    // horizontal wall
-      { x: cx - 50, y: cy - 200, w: 15, h: 80 },     // left vertical wall
-      { x: cx + 80, y: cy - 180, w: 15, h: 100 },    // right pillar
-    ];
-
-    // Enemies behind cover
-    demoState.enemies = [
-      { x: cx + 40, y: cy - 220, radius: 10 },       // behind horizontal wall
-      { x: cx - 80, y: cy - 250, radius: 10 },       // far left
-    ];
-  }
-
-  buildDemoScene();
-
-  // --- Render Loop (dirty-flag gated) ---
-  let dirty = true;
-  let lastLeanState = 'neutral';
-
-  function renderLoop() {
-    const currentLean = input.leanState;
-    if (currentLean !== lastLeanState) {
-      lastLeanState = currentLean;
-      demoState.leanState = currentLean;
-      dirty = true;
-    }
-    if (dirty) {
-      renderer.render(demoState);
-      dirty = false;
-    }
+  // Clock display loop (always runs, independent of mode)
+  function clockLoop() {
     clockDisplay.textContent = (clock.elapsed() / 1000).toFixed(3) + 's';
-    requestAnimationFrame(renderLoop);
+    requestAnimationFrame(clockLoop);
   }
-  requestAnimationFrame(renderLoop);
+  requestAnimationFrame(clockLoop);
 
-  // Rebuild scene on resize (with cleanup via AbortController)
-  const resizeController = new AbortController();
-  window.addEventListener('resize', () => {
-    clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => {
-      renderer.resize();
-      buildDemoScene();
-      dirty = true;
-    }, 150);
-  }, { signal: resizeController.signal });
+  // --- Esc key pause handling ---
+  input.on('keydown', (data) => {
+    if (data.code === 'Escape' && modeManager.currentMode) {
+      const mode = modeManager.currentMode;
+      if (mode.state === 'running') {
+        mode.pause();
+      } else if (mode.state === 'paused') {
+        mode.resume();
+      }
+    }
+  });
+
+  // --- Initial mode: Free Practice ---
+  modeManager.switchTo('free');
 
   // --- Self-test functions (dev mode) ---
-  async function runAudioEngineTests() {
+  function createTestContext() {
     const results = [];
     function assert(name, condition) {
       results.push({ name, pass: !!condition });
       console.log(condition ? '[PASS]' : '[FAIL]', name);
     }
+    function summary(label) {
+      const passed = results.filter(r => r.pass).length;
+      const total = results.length;
+      console.log('--- ' + label + ': ' + passed + '/' + total + ' passed ---');
+      return { passed, total, results };
+    }
+    return { results, assert, summary };
+  }
+
+  async function runAudioEngineTests() {
+    const { assert, summary } = createTestContext();
 
     // Test 1: Initial state
     const testEngine = new AudioEngine();
@@ -1468,23 +1774,175 @@ class AudioEngine {
     }
     uninitEngine.destroy();
 
-    const passed = results.filter(r => r.pass).length;
-    const total = results.length;
-    console.log('--- AudioEngine Tests: ' + passed + '/' + total + ' passed ---');
-    return { passed, total, results };
+    return summary('AudioEngine Tests');
   }
 
-  // --- Expose for other modules and testing ---
+  async function runModeLifecycleTests() {
+    const { assert, summary } = createTestContext();
+
+    // --- State transition tests ---
+    const mode = new ModeLifecycle('test');
+    assert('initial state is idle', mode.state === 'idle');
+
+    mode.enter();
+    assert('state is idle after enter', mode.state === 'idle');
+
+    mode.start();
+    assert('state is running after start', mode.state === 'running');
+
+    mode.pause();
+    assert('state is paused after pause', mode.state === 'paused');
+
+    mode.resume();
+    assert('state is running after resume', mode.state === 'running');
+
+    mode.stop();
+    assert('state is result after stop', mode.state === 'result');
+
+    mode.start();
+    assert('can start from result', mode.state === 'running');
+
+    mode.dispose();
+    assert('state is idle after dispose', mode.state === 'idle');
+
+    // --- Invalid transitions ---
+    const mode2 = new ModeLifecycle('test2');
+    mode2.enter();
+    mode2.pause(); // should not change from idle
+    assert('pause from idle is no-op', mode2.state === 'idle');
+
+    mode2.resume(); // should not change from idle
+    assert('resume from idle is no-op', mode2.state === 'idle');
+
+    mode2.stop(); // should not change from idle
+    assert('stop from idle is no-op', mode2.state === 'idle');
+
+    mode2.start();
+    mode2.start(); // double start, stays running
+    assert('double start stays running', mode2.state === 'running');
+    mode2.dispose();
+
+    // --- Resource tracking tests ---
+    const mode3 = new ModeLifecycle('test3');
+    mode3.enter();
+    mode3.start();
+
+    let timerFired = false;
+    mode3._addTimeout(() => { timerFired = true; }, 50);
+    assert('timer is tracked', mode3._getResourceCounts().timers === 1);
+
+    const intervalId = mode3._addInterval(() => {}, 1000);
+    assert('interval is tracked', mode3._getResourceCounts().timers === 2);
+
+    let rafFired = false;
+    mode3._addRAF(() => { rafFired = true; });
+    assert('raf is tracked', mode3._getResourceCounts().rafs === 1);
+
+    const target = document.createElement('div');
+    mode3._addEventListener(target, 'click', () => {});
+    assert('listener is tracked', mode3._getResourceCounts().listeners === 1);
+
+    mode3.dispose();
+    assert('all timers cleared after dispose', mode3._getResourceCounts().timers === 0);
+    assert('all rafs cleared after dispose', mode3._getResourceCounts().rafs === 0);
+    assert('all listeners cleared after dispose', mode3._getResourceCounts().listeners === 0);
+
+    // --- Lifecycle leak test (mode switching stress) ---
+    const testRenderer = renderer;
+    const testInput = input;
+    const testAudio = audioEngine;
+    const testMM = new ModeManager(testInput, testAudio);
+
+    const leakModes = [];
+    for (let i = 0; i < 4; i++) {
+      const m = new FreePracticeMode(testRenderer, testInput, clock);
+      testMM.register('leak' + i, m);
+      leakModes.push(m);
+    }
+
+    // Switch modes 10 times rapidly
+    for (let i = 0; i < 10; i++) {
+      await testMM.switchTo('leak' + (i % 4));
+    }
+
+    // Check previous modes have zero resources
+    let allClean = true;
+    const currentModeName = testMM.currentModeName;
+    for (let i = 0; i < 4; i++) {
+      const m = leakModes[i];
+      if ('leak' + i === currentModeName) continue;
+      const counts = m._getResourceCounts();
+      if (counts.timers !== 0 || counts.rafs !== 0 || counts.listeners !== 0) {
+        allClean = false;
+        console.log('[LEAK]', 'leak' + i, counts);
+      }
+    }
+    assert('no resource leaks after 10 mode switches', allClean);
+
+    // Current mode should have resources
+    const current = testMM.currentMode;
+    if (current) {
+      const counts = current._getResourceCounts();
+      assert('current mode has active resources', counts.rafs > 0 || counts.listeners > 0);
+    }
+
+    // Clean up: switch back to main free mode
+    current.dispose();
+
+    // --- ModeManager tests ---
+    const mm2 = new ModeManager(testInput, testAudio);
+    const modeA = new PlaceholderMode('a', 'Mode A');
+    const modeB = new PlaceholderMode('b', 'Mode B');
+    mm2.register('a', modeA);
+    mm2.register('b', modeB);
+
+    assert('currentMode is null before switch', mm2.currentMode === null);
+
+    await mm2.switchTo('a');
+    assert('currentModeName is a', mm2.currentModeName === 'a');
+    assert('currentMode is modeA', mm2.currentMode === modeA);
+
+    await mm2.switchTo('b');
+    assert('currentModeName is b after switch', mm2.currentModeName === 'b');
+    assert('modeA is idle after switch away', modeA.state === 'idle');
+
+    // Switch to same mode is no-op
+    await mm2.switchTo('b');
+    assert('switch to same mode is no-op', mm2.currentModeName === 'b');
+
+    // Unknown mode throws
+    let threwError = false;
+    try {
+      await mm2.switchTo('unknown');
+    } catch (e) {
+      threwError = true;
+    }
+    assert('switching to unknown mode throws', threwError);
+
+    // Restore original mode
+    await modeManager.switchTo('free');
+
+    return summary('ModeLifecycle Tests');
+  }
+
+  async function runTests() {
+    console.log('=== EFT Trainer Self-Tests ===');
+    const audioResults = await runAudioEngineTests();
+    const modeResults = await runModeLifecycleTests();
+    const totalPassed = audioResults.passed + modeResults.passed;
+    const totalTests = audioResults.total + modeResults.total;
+    console.log('=== Total: ' + totalPassed + '/' + totalTests + ' passed ===');
+    return { audioResults, modeResults, totalPassed, totalTests };
+  }
+
+  // --- Expose minimal public API ---
   window.EFTTrainer = Object.freeze({
-    clock,
-    input,
-    storage,
-    appData,
-    renderer,
-    audioEngine,
-    runAudioEngineTests,
+    modeManager,
+    runTests,
     destroy() {
-      resizeController.abort();
+      if (modeManager.currentMode) {
+        modeManager.currentMode.dispose();
+      }
       renderer.destroy();
       audioEngine.destroy();
     }

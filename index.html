@@ -513,6 +513,106 @@ html, body {
 }
 
 #warning-banner.visible { display: block; }
+
+/* === Warmup Guide Overlay === */
+#warmup-guide {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(10, 10, 25, 0.92);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 16px;
+  z-index: 10;
+}
+#warmup-guide.active { display: flex; }
+#warmup-guide .warmup-title {
+  font-size: 16px;
+  color: var(--accent-turquoise);
+  letter-spacing: 4px;
+  text-transform: uppercase;
+}
+#warmup-guide .warmup-key-display {
+  width: 72px;
+  height: 72px;
+  border: 3px solid var(--accent-turquoise);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  font-weight: bold;
+  color: var(--accent-turquoise);
+  transition: all 0.15s;
+}
+#warmup-guide .warmup-key-display.pressed {
+  background: var(--accent-turquoise);
+  color: var(--bg-primary);
+}
+#warmup-guide .warmup-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+#warmup-guide .warmup-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+#warmup-guide .warmup-progress {
+  display: flex;
+  gap: 6px;
+}
+#warmup-guide .warmup-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--panel-border);
+}
+#warmup-guide .warmup-dot.done { background: var(--accent-turquoise); }
+#warmup-guide .warmup-dot.current {
+  background: var(--accent-turquoise);
+  box-shadow: 0 0 6px var(--accent-turquoise);
+}
+#warmup-guide .warmup-skip {
+  margin-top: 8px;
+  background: transparent;
+  border: 1px solid var(--text-muted);
+  color: var(--text-secondary);
+  padding: 5px 14px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 2px;
+  border-radius: 3px;
+}
+#warmup-guide .warmup-skip:hover {
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+/* === Free Practice Drill Panel === */
+.free-practice-info { padding: 8px 0; }
+.free-practice-info .fp-title {
+  font-size: 13px;
+  font-weight: bold;
+  color: var(--accent-turquoise);
+  margin-bottom: 6px;
+  letter-spacing: 1px;
+}
+.free-practice-info .fp-controls {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+.free-practice-info .fp-legend {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 6px;
+  line-height: 1.5;
+}
+.fp-legend-visible { color: var(--accent-turquoise); }
+.fp-legend-blocked { color: var(--accent-red); }
 </style>
 </head>
 <body>
@@ -545,6 +645,15 @@ html, body {
     <div id="canvas-container">
       <canvas id="game-canvas" role="img" aria-label="リーン練習シミュレーション"></canvas>
       <div id="canvas-overlay">AWAITING RENDERER</div>
+      <!-- Warmup Guide (shown on first free practice entry) -->
+      <div id="warmup-guide">
+        <div class="warmup-title">WARMUP GUIDE</div>
+        <div class="warmup-key-display" id="warmup-key"></div>
+        <div class="warmup-desc" id="warmup-desc"></div>
+        <div class="warmup-hint" id="warmup-hint">Press the key to continue</div>
+        <div class="warmup-progress" id="warmup-progress"></div>
+        <button class="warmup-skip" id="warmup-skip">SKIP</button>
+      </div>
     </div>
 
     <!-- Bottom: Key Indicators + Info Panel -->
@@ -1628,14 +1737,18 @@ class ModeManager {
 // FreePracticeMode — Free practice with real-time lean display
 // ============================================================
 class FreePracticeMode extends ModeLifecycle {
-  constructor(renderer, inputManager, clock) {
+  constructor(renderer, inputManager, clock, storage) {
     super('free');
     this._renderer = renderer;
     this._inputManager = inputManager;
     this._clock = clock;
+    this._storage = storage;
     this._loopId = null;
-    this._needsRender = true;
-    this._lastLeanState = 'neutral';
+    this._lastFrameTime = 0;
+
+    // Movement config
+    this.MOVE_SPEED = 150; // pixels per second
+    this.CHAR_RADIUS = 15;
 
     this._scene = {
       character: { x: 0, y: 0 },
@@ -1643,22 +1756,32 @@ class FreePracticeMode extends ModeLifecycle {
       obstacles: [],
       enemies: []
     };
+
+    // Warmup guide state
+    this._warmupActive = false;
+    this._warmupStep = 0;
+    this._warmupSteps = [
+      { key: 'KeyW', label: 'W', desc: 'Forward — Move up' },
+      { key: 'KeyA', label: 'A', desc: 'Left — Move left' },
+      { key: 'KeyS', label: 'S', desc: 'Backward — Move down' },
+      { key: 'KeyD', label: 'D', desc: 'Right — Move right' },
+      { key: 'KeyQ', label: 'Q', desc: 'Lean Left — Peek left around cover' },
+      { key: 'KeyE', label: 'E', desc: 'Lean Right — Peek right around cover' },
+    ];
   }
 
   enter() {
     super.enter();
     this._buildScene();
-    this._needsRender = true;
-    this._lastLeanState = this._inputManager.leanState;
-    this._scene.leanState = this._lastLeanState;
+    this._lastFrameTime = this._clock.now();
+    this._scene.leanState = this._inputManager.leanState;
 
-    // Start render loop
-    this._startLoop();
+    // Update drill panel with mode info
+    this._updateDrillPanel();
 
-    // Listen for lean changes (tracked via _addDisposable for unified cleanup)
+    // Listen for lean changes
     this._onLeanChange = (data) => {
       this._scene.leanState = data.newState;
-      this._needsRender = true;
     };
     this._inputManager.on('leanchange', this._onLeanChange);
     this._addDisposable(() => {
@@ -1666,60 +1789,272 @@ class FreePracticeMode extends ModeLifecycle {
       this._onLeanChange = null;
     });
 
-    // Listen for resize (tracked via _addEventListener for auto-cleanup)
+    // Listen for resize
     this._onResize = () => {
       this._renderer.resize();
-      this._buildScene();
-      this._needsRender = true;
+      this._clampCharacter();
     };
     this._addEventListener(window, 'resize', this._onResize);
+
+    // Check if warmup guide should show
+    const appData = this._storage.load();
+    if (!appData.freePractice || !appData.freePractice.warmupDone) {
+      this._showWarmupGuide();
+    }
+
+    // Start render loop
+    this._startLoop();
   }
 
   dispose() {
-    // Stop render loop
     if (this._loopId !== null) {
       this._cancelRAF(this._loopId);
       this._loopId = null;
     }
-
-    // All listeners (InputManager + DOM) are cleaned up by super.dispose()
+    this._hideWarmupGuide();
     super.dispose();
   }
 
   _buildScene() {
-    const cx = this._renderer.width / 2;
-    const cy = this._renderer.height * 0.65;
+    const w = this._renderer.width;
+    const h = this._renderer.height;
+    const cx = w / 2;
+    const cy = h * 0.65;
 
     this._scene.character.x = cx;
     this._scene.character.y = cy;
 
+    // Arena layout: walls and corners for peek practice
     this._scene.obstacles = [
-      { x: cx - 50, y: cy - 120, w: 100, h: 15 },
-      { x: cx - 50, y: cy - 200, w: 15, h: 80 },
-      { x: cx + 80, y: cy - 180, w: 15, h: 100 },
+      // Top horizontal wall with gap in center
+      { x: cx - 140, y: cy - 160, w: 120, h: 14 },
+      { x: cx + 20, y: cy - 160, w: 120, h: 14 },
+      // Left vertical wall (creates left corner)
+      { x: cx - 140, y: cy - 160, w: 14, h: 90 },
+      // Right vertical wall (creates right corner)
+      { x: cx + 126, y: cy - 160, w: 14, h: 70 },
+      // Center cover box (partial cover)
+      { x: cx - 25, y: cy - 90, w: 50, h: 14 },
     ];
 
+    // Enemies behind cover at various angles
     this._scene.enemies = [
-      { x: cx + 40, y: cy - 220, radius: 10 },
-      { x: cx - 80, y: cy - 250, radius: 10 },
+      { x: cx, y: cy - 230, radius: 10 },       // center, behind gap
+      { x: cx - 100, y: cy - 220, radius: 10 },  // left, behind left wall
+      { x: cx + 90, y: cy - 210, radius: 10 },   // right, behind right wall
     ];
   }
 
   _startLoop() {
+    this._lastFrameTime = this._clock.now();
     const loop = () => {
-      const currentLean = this._inputManager.leanState;
-      if (currentLean !== this._lastLeanState) {
-        this._lastLeanState = currentLean;
-        this._scene.leanState = currentLean;
-        this._needsRender = true;
+      const now = this._clock.now();
+      const dt = Math.min((now - this._lastFrameTime) / 1000, 0.1); // cap at 100ms
+      this._lastFrameTime = now;
+
+      // Update movement from WASD keys
+      if (!this._warmupActive) {
+        this._updateMovement(dt);
       }
-      if (this._needsRender) {
-        this._renderer.render(this._scene);
-        this._needsRender = false;
-      }
+
+      // Sync lean state
+      this._scene.leanState = this._inputManager.leanState;
+
+      // Render every frame (movement is continuous)
+      this._renderer.render(this._scene);
+
       this._loopId = this._addRAF(loop);
     };
     this._loopId = this._addRAF(loop);
+  }
+
+  _updateMovement(dt) {
+    const keys = this._inputManager.pressedKeys;
+    let dx = 0;
+    let dy = 0;
+
+    if (keys.has('KeyW')) dy -= 1;
+    if (keys.has('KeyS')) dy += 1;
+    if (keys.has('KeyA')) dx -= 1;
+    if (keys.has('KeyD')) dx += 1;
+
+    if (dx === 0 && dy === 0) return;
+
+    // Normalize diagonal movement
+    const len = Math.sqrt(dx * dx + dy * dy);
+    dx = (dx / len) * this.MOVE_SPEED * dt;
+    dy = (dy / len) * this.MOVE_SPEED * dt;
+
+    const char = this._scene.character;
+    const newX = char.x + dx;
+    const newY = char.y + dy;
+
+    // Try full movement, then slide along each axis independently
+    if (!this._collidesWithObstacle(newX, newY)) {
+      char.x = newX;
+      char.y = newY;
+    } else {
+      if (!this._collidesWithObstacle(newX, char.y)) {
+        char.x = newX;
+      }
+      if (!this._collidesWithObstacle(char.x, newY)) {
+        char.y = newY;
+      }
+    }
+
+    this._clampCharacter();
+  }
+
+  _collidesWithObstacle(cx, cy) {
+    const r = this.CHAR_RADIUS;
+    for (const obs of this._scene.obstacles) {
+      // Circle vs AABB collision
+      const nearX = Math.max(obs.x, Math.min(cx, obs.x + obs.w));
+      const nearY = Math.max(obs.y, Math.min(cy, obs.y + obs.h));
+      const distX = cx - nearX;
+      const distY = cy - nearY;
+      if (distX * distX + distY * distY < r * r) return true;
+    }
+    return false;
+  }
+
+  _clampCharacter() {
+    const r = this.CHAR_RADIUS;
+    const w = this._renderer.width;
+    const h = this._renderer.height;
+    const char = this._scene.character;
+    char.x = Math.max(r, Math.min(w - r, char.x));
+    char.y = Math.max(r, Math.min(h - r, char.y));
+  }
+
+  _updateDrillPanel() {
+    const panel = document.getElementById('drill-panel');
+    if (!panel) return;
+    panel.textContent = '';
+    const info = document.createElement('div');
+    info.className = 'free-practice-info';
+
+    const title = document.createElement('div');
+    title.className = 'fp-title';
+    title.textContent = 'FREE PRACTICE';
+    info.appendChild(title);
+
+    const controls = document.createElement('div');
+    controls.className = 'fp-controls';
+    controls.textContent = 'Move: WASD  |  Lean: Q / E';
+    info.appendChild(controls);
+
+    const legend = document.createElement('div');
+    legend.className = 'fp-legend';
+    legend.appendChild(document.createTextNode('Peek around cover to spot enemies.'));
+    legend.appendChild(document.createElement('br'));
+    const greenSpan = document.createElement('span');
+    greenSpan.className = 'fp-legend-visible';
+    greenSpan.textContent = 'Green ray';
+    legend.appendChild(greenSpan);
+    legend.appendChild(document.createTextNode(' = visible \u00A0 '));
+    const redSpan = document.createElement('span');
+    redSpan.className = 'fp-legend-blocked';
+    redSpan.textContent = 'Red ray';
+    legend.appendChild(redSpan);
+    legend.appendChild(document.createTextNode(' = blocked'));
+    info.appendChild(legend);
+
+    panel.appendChild(info);
+  }
+
+  // --- Warmup Guide ---
+
+  _showWarmupGuide() {
+    this._warmupActive = true;
+    this._warmupStep = 0;
+    this._previousFocus = document.activeElement;
+    const guide = document.getElementById('warmup-guide');
+    if (!guide) return;
+    guide.setAttribute('role', 'dialog');
+    guide.setAttribute('aria-label', 'Warmup Guide');
+    guide.setAttribute('aria-modal', 'true');
+    guide.classList.add('active');
+
+    const progressEl = document.getElementById('warmup-progress');
+    if (progressEl) progressEl.setAttribute('aria-live', 'polite');
+
+    this._renderWarmupStep();
+
+    // Focus the skip button so keyboard users can interact
+    const skipBtn = document.getElementById('warmup-skip');
+    if (skipBtn) skipBtn.focus();
+
+    // Key handler for warmup
+    this._onWarmupKey = (data) => {
+      if (!this._warmupActive) return;
+      const step = this._warmupSteps[this._warmupStep];
+      if (data.code === step.key) {
+        // Highlight key briefly
+        const keyEl = document.getElementById('warmup-key');
+        if (keyEl) keyEl.classList.add('pressed');
+        this._addTimeout(() => {
+          if (keyEl) keyEl.classList.remove('pressed');
+          this._warmupStep++;
+          if (this._warmupStep >= this._warmupSteps.length) {
+            this._completeWarmup();
+          } else {
+            this._renderWarmupStep();
+          }
+        }, 200);
+      }
+    };
+    this._inputManager.on('keydown', this._onWarmupKey);
+    this._addDisposable(() => {
+      this._inputManager.off('keydown', this._onWarmupKey);
+      this._onWarmupKey = null;
+    });
+
+    // Skip button
+    if (skipBtn) {
+      this._onSkip = () => this._completeWarmup();
+      this._addEventListener(skipBtn, 'click', this._onSkip);
+    }
+  }
+
+  _renderWarmupStep() {
+    const step = this._warmupSteps[this._warmupStep];
+    const keyEl = document.getElementById('warmup-key');
+    const descEl = document.getElementById('warmup-desc');
+    const progressEl = document.getElementById('warmup-progress');
+    if (keyEl) { keyEl.textContent = step.label; keyEl.classList.remove('pressed'); }
+    if (descEl) descEl.textContent = step.desc;
+    if (progressEl) {
+      progressEl.textContent = '';
+      this._warmupSteps.forEach((_, i) => {
+        const dot = document.createElement('div');
+        dot.className = 'warmup-dot' +
+          (i < this._warmupStep ? ' done' : i === this._warmupStep ? ' current' : '');
+        progressEl.appendChild(dot);
+      });
+    }
+  }
+
+  _completeWarmup() {
+    this._warmupActive = false;
+    this._hideWarmupGuide();
+    // Save warmup completion
+    const appData = this._storage.load();
+    if (!appData.freePractice) appData.freePractice = {};
+    appData.freePractice.warmupDone = true;
+    this._storage.save(appData);
+  }
+
+  _hideWarmupGuide() {
+    const guide = document.getElementById('warmup-guide');
+    if (guide) {
+      guide.classList.remove('active');
+      guide.removeAttribute('aria-modal');
+    }
+    if (this._previousFocus && typeof this._previousFocus.focus === 'function') {
+      this._previousFocus.focus();
+      this._previousFocus = null;
+    }
   }
 }
 
@@ -2446,7 +2781,7 @@ class PlaceholderMode extends ModeLifecycle {
   });
 
   // --- Register Modes ---
-  const freeMode = new FreePracticeMode(renderer, input, clock);
+  const freeMode = new FreePracticeMode(renderer, input, clock, storage);
   const reactionMode = new ReactionDrillMode(input, clock, storage, appData);
   const comboMode = new PlaceholderMode('combo', 'Combo Drill');
   const rhythmMode = new PlaceholderMode('rhythm', 'Rhythm Drill');
@@ -2671,7 +3006,7 @@ class PlaceholderMode extends ModeLifecycle {
 
     const leakModes = [];
     for (let i = 0; i < 4; i++) {
-      const m = new FreePracticeMode(testRenderer, testInput, clock);
+      const m = new FreePracticeMode(testRenderer, testInput, clock, storage);
       testMM.register('leak' + i, m);
       leakModes.push(m);
     }
@@ -2739,6 +3074,97 @@ class PlaceholderMode extends ModeLifecycle {
     await modeManager.switchTo('free');
 
     return summary('ModeLifecycle Tests');
+  }
+
+  function runFreePracticeTests() {
+    const { assert, summary } = createTestContext();
+
+    // --- Movement tests ---
+    const testFP = new FreePracticeMode(renderer, input, clock, storage);
+    testFP._renderer = renderer;
+    testFP.enter();
+
+    // Save initial position
+    const startX = testFP._scene.character.x;
+    const startY = testFP._scene.character.y;
+
+    assert('character starts at center-ish X', startX > 0);
+    assert('character starts at lower area Y', startY > 0);
+
+    // Simulate forward movement
+    testFP._scene.character.x = 200;
+    testFP._scene.character.y = 200;
+    const oldY = testFP._scene.character.y;
+    // Mock W key pressed
+    testFP._inputManager.pressedKeys.add('KeyW');
+    testFP._updateMovement(0.1); // 100ms
+    assert('W moves character upward (Y decreases)', testFP._scene.character.y < oldY);
+    testFP._inputManager.pressedKeys.delete('KeyW');
+
+    // Simulate right movement
+    const oldX = testFP._scene.character.x;
+    testFP._inputManager.pressedKeys.add('KeyD');
+    testFP._updateMovement(0.1);
+    assert('D moves character right (X increases)', testFP._scene.character.x > oldX);
+    testFP._inputManager.pressedKeys.delete('KeyD');
+
+    // Diagonal movement should be normalized
+    testFP._scene.character.x = 200;
+    testFP._scene.character.y = 200;
+    testFP._inputManager.pressedKeys.add('KeyW');
+    testFP._inputManager.pressedKeys.add('KeyD');
+    testFP._updateMovement(0.1);
+    const diagDx = testFP._scene.character.x - 200;
+    const diagDy = 200 - testFP._scene.character.y;
+    const diagDist = Math.sqrt(diagDx * diagDx + diagDy * diagDy);
+    const straightDist = testFP.MOVE_SPEED * 0.1;
+    assert('diagonal movement is normalized', Math.abs(diagDist - straightDist) < 1);
+    testFP._inputManager.pressedKeys.delete('KeyW');
+    testFP._inputManager.pressedKeys.delete('KeyD');
+
+    // --- Collision tests ---
+    // Place character right next to an obstacle
+    const obs = testFP._scene.obstacles[0]; // first obstacle
+    assert('collision with obstacle is detected',
+      testFP._collidesWithObstacle(obs.x + obs.w / 2, obs.y + obs.h / 2));
+    assert('no collision when far away',
+      !testFP._collidesWithObstacle(0, 0));
+
+    // --- Boundary clamping ---
+    testFP._scene.character.x = -50;
+    testFP._scene.character.y = -50;
+    testFP._clampCharacter();
+    assert('X is clamped to minimum', testFP._scene.character.x >= testFP.CHAR_RADIUS);
+    assert('Y is clamped to minimum', testFP._scene.character.y >= testFP.CHAR_RADIUS);
+
+    testFP._scene.character.x = 9999;
+    testFP._scene.character.y = 9999;
+    testFP._clampCharacter();
+    const maxX = renderer.width - testFP.CHAR_RADIUS;
+    const maxY = renderer.height - testFP.CHAR_RADIUS;
+    assert('X is clamped to maximum', testFP._scene.character.x <= maxX);
+    assert('Y is clamped to maximum', testFP._scene.character.y <= maxY);
+
+    // --- No movement when keys not pressed ---
+    testFP._scene.character.x = 200;
+    testFP._scene.character.y = 200;
+    testFP._updateMovement(0.1);
+    assert('no movement without keys', testFP._scene.character.x === 200 && testFP._scene.character.y === 200);
+
+    // --- Scene has obstacles and enemies ---
+    assert('scene has obstacles', testFP._scene.obstacles.length > 0);
+    assert('scene has enemies', testFP._scene.enemies.length > 0);
+
+    // --- Warmup guide steps defined ---
+    assert('warmup has 6 steps', testFP._warmupSteps.length === 6);
+
+    testFP.dispose();
+    input.resetState();
+
+    // Restore original mode
+    modeManager.switchTo('free');
+
+    return summary('FreePractice Tests');
   }
 
   async function runReactionDrillTests() {
@@ -2832,11 +3258,12 @@ class PlaceholderMode extends ModeLifecycle {
     console.log('=== EFT Trainer Self-Tests ===');
     const audioResults = await runAudioEngineTests();
     const modeResults = await runModeLifecycleTests();
+    const fpResults = runFreePracticeTests();
     const reactionResults = await runReactionDrillTests();
-    const totalPassed = audioResults.passed + modeResults.passed + reactionResults.passed;
-    const totalTests = audioResults.total + modeResults.total + reactionResults.total;
+    const totalPassed = audioResults.passed + modeResults.passed + fpResults.passed + reactionResults.passed;
+    const totalTests = audioResults.total + modeResults.total + fpResults.total + reactionResults.total;
     console.log('=== Total: ' + totalPassed + '/' + totalTests + ' passed ===');
-    return { audioResults, modeResults, reactionResults, totalPassed, totalTests };
+    return { audioResults, modeResults, fpResults, reactionResults, totalPassed, totalTests };
   }
 
   // --- Expose minimal public API ---

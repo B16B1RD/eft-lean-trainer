@@ -26,6 +26,8 @@
   --key-lean-right: #e94560;
   --panel-bg: rgba(22, 33, 62, 0.8);
   --panel-border: rgba(15, 52, 96, 0.6);
+  --bg-darker: #111;
+  --accent-yellow: #f0a500;
 }
 
 html, body {
@@ -743,7 +745,7 @@ html, body {
 }
 .rhythm-score {
   font-size: 11px; color: var(--text-muted); text-align: center;
-  padding: 4px 0; letter-spacing: 1px; font-family: monospace;
+  padding: 4px 0; letter-spacing: 1px;
 }
 .rhythm-breakdown {
   display: flex; gap: 12px; justify-content: center;
@@ -755,7 +757,7 @@ html, body {
   animation: drill-pulse 1s ease-in-out infinite;
 }
 .rhythm-beat-indicator {
-  height: 4px; background: var(--bg-darker, #111); border-radius: 2px;
+  height: 4px; background: var(--bg-darker); border-radius: 2px;
   margin-top: 6px; overflow: hidden; position: relative;
 }
 .rhythm-beat-indicator .beat-flash {
@@ -3551,6 +3553,14 @@ class RhythmDrillMode extends ModeLifecycle {
 
     // Feedback timer
     this._feedbackTimerId = null;
+
+    // DOM cache (populated in _showDrillUI)
+    this._domRefs = {};
+
+    // Score counters (avoid repeated filter() in hot loop)
+    this._perfectCount = 0;
+    this._goodCount = 0;
+    this._missCount = 0;
   }
 
   enter() {
@@ -3568,12 +3578,16 @@ class RhythmDrillMode extends ModeLifecycle {
     try {
       await this._audio.init();
     } catch (e) {
+      console.warn('[RhythmDrill] AudioEngine init failed, switching to silent mode:', e);
       this._silentMode = true;
     }
 
     super.start();
 
     this._results = [];
+    this._perfectCount = 0;
+    this._goodCount = 0;
+    this._missCount = 0;
     this._nextBeatIndex = 0;
     this._currentBeatForJudgment = 0;
     this._inputHandled = false;
@@ -3586,7 +3600,7 @@ class RhythmDrillMode extends ModeLifecycle {
     if (this._state !== 'running') return;
     super.pause();
     this._stopScheduler();
-    try { this._audio.suspend(); } catch (e) { /* ignore */ }
+    try { this._audio.suspend(); } catch (e) { console.warn('[RhythmDrill] AudioEngine suspend failed:', e); }
     this._showPauseUI();
   }
 
@@ -3596,6 +3610,7 @@ class RhythmDrillMode extends ModeLifecycle {
     try {
       await this._audio.resume();
     } catch (e) {
+      console.warn('[RhythmDrill] AudioEngine resume failed, switching to silent mode:', e);
       this._silentMode = true;
     }
 
@@ -3780,6 +3795,9 @@ class RhythmDrillMode extends ModeLifecycle {
 
   _recordResult(beatIndex, judgment, timingMs) {
     this._results.push({ beatIndex, judgment, timing: timingMs });
+    if (judgment === 'perfect') this._perfectCount++;
+    else if (judgment === 'good') this._goodCount++;
+    else this._missCount++;
   }
 
   // --- Progress ---
@@ -3841,31 +3859,7 @@ class RhythmDrillMode extends ModeLifecycle {
     desc.textContent = 'BPMに合わせてE→戻→Q→戻のリーン操作を繰り返します。ビートに合わせて正確に入力しましょう。';
     panel.appendChild(desc);
 
-    // Pattern preview
-    const patternDiv = document.createElement('div');
-    patternDiv.className = 'combo-demo-area';
-    const steps = [
-      { label: 'E', desc: 'Lean R' },
-      { label: '—', desc: 'Center' },
-      { label: 'Q', desc: 'Lean L' },
-      { label: '—', desc: 'Center' }
-    ];
-    for (let i = 0; i < steps.length; i++) {
-      if (i > 0) {
-        const arrow = document.createElement('span');
-        arrow.className = 'combo-demo-arrow';
-        arrow.textContent = '→';
-        patternDiv.appendChild(arrow);
-      }
-      const stepEl = document.createElement('span');
-      stepEl.className = 'combo-demo-step';
-      const keysSpan = document.createElement('span');
-      keysSpan.className = 'step-keys';
-      keysSpan.textContent = steps[i].label;
-      stepEl.appendChild(keysSpan);
-      patternDiv.appendChild(stepEl);
-    }
-    panel.appendChild(patternDiv);
+    panel.appendChild(this._createPatternPreview());
 
     // BPM slider
     const bpmContainer = document.createElement('div');
@@ -3873,10 +3867,12 @@ class RhythmDrillMode extends ModeLifecycle {
 
     const bpmLabel = document.createElement('label');
     bpmLabel.className = 'rhythm-bpm-label';
+    bpmLabel.htmlFor = 'rhythm-bpm';
     bpmLabel.textContent = 'BPM: ' + this._currentBPM;
 
     const bpmSlider = document.createElement('input');
     bpmSlider.type = 'range';
+    bpmSlider.id = 'rhythm-bpm';
     bpmSlider.className = 'rhythm-bpm-slider';
     bpmSlider.min = RhythmDrillMode.BPM_MIN;
     bpmSlider.max = RhythmDrillMode.BPM_MAX;
@@ -3935,6 +3931,33 @@ class RhythmDrillMode extends ModeLifecycle {
     startBtn.textContent = 'Start Drill';
     startBtn.addEventListener('click', () => this.start());
     panel.appendChild(startBtn);
+  }
+
+  _createPatternPreview() {
+    const patternDiv = document.createElement('div');
+    patternDiv.className = 'combo-demo-area';
+    const steps = [
+      { label: 'E', desc: 'Lean R' },
+      { label: '—', desc: 'Center' },
+      { label: 'Q', desc: 'Lean L' },
+      { label: '—', desc: 'Center' }
+    ];
+    for (let i = 0; i < steps.length; i++) {
+      if (i > 0) {
+        const arrow = document.createElement('span');
+        arrow.className = 'combo-demo-arrow';
+        arrow.textContent = '→';
+        patternDiv.appendChild(arrow);
+      }
+      const stepEl = document.createElement('span');
+      stepEl.className = 'combo-demo-step';
+      const keysSpan = document.createElement('span');
+      keysSpan.className = 'step-keys';
+      keysSpan.textContent = steps[i].label;
+      stepEl.appendChild(keysSpan);
+      patternDiv.appendChild(stepEl);
+    }
+    return patternDiv;
   }
 
   _showCountdown() {
@@ -4012,6 +4035,7 @@ class RhythmDrillMode extends ModeLifecycle {
     const feedback = document.createElement('div');
     feedback.className = 'rhythm-feedback';
     feedback.id = 'rhythm-feedback';
+    feedback.setAttribute('aria-live', 'polite');
     panel.appendChild(feedback);
 
     // Score area
@@ -4029,29 +4053,43 @@ class RhythmDrillMode extends ModeLifecycle {
     beatIndicator.appendChild(flash);
     panel.appendChild(beatIndicator);
 
+    // Cache DOM refs for hot-loop access
+    this._domRefs = {
+      progress: progressDiv,
+      instruction: instruction,
+      keyDisplay: keyDisplay,
+      score: scoreDiv,
+      feedback: feedback,
+      flash: flash
+    };
+
     this._updateDrillDisplay();
   }
 
   _updateDrillDisplay() {
-    const progressDiv = document.getElementById('rhythm-progress');
-    const instruction = document.getElementById('rhythm-instruction');
-    const keyDisplay = document.getElementById('rhythm-key-display');
-    const scoreDiv = document.getElementById('rhythm-score');
-
-    if (!progressDiv || !instruction || !keyDisplay) return;
+    const refs = this._domRefs;
+    if (!refs.progress || !refs.instruction || !refs.keyDisplay) return;
 
     const currentBeat = this._currentBeatForJudgment;
-    const warmup = RhythmDrillMode.WARMUP_BEATS;
+    this._updateDrillProgress(refs, currentBeat);
+    this._updateDrillInstruction(refs, currentBeat);
+    this._updateDrillScore(refs);
+    this._updateBeatFlash(refs, currentBeat);
+  }
 
-    progressDiv.textContent = currentBeat < warmup
+  _updateDrillProgress(refs, currentBeat) {
+    const warmup = RhythmDrillMode.WARMUP_BEATS;
+    refs.progress.textContent = currentBeat < warmup
       ? 'Warm-up ' + (currentBeat + 1) + '/' + warmup
       : 'Beat ' + (currentBeat - warmup + 1) + '/' + RhythmDrillMode.BEATS_PER_SET;
+  }
 
+  _updateDrillInstruction(refs, currentBeat) {
     const patternIndex = currentBeat % this._pattern.length;
     const expected = this._pattern[patternIndex];
-    instruction.textContent = this._getInstructionText(expected);
+    refs.instruction.textContent = this._getInstructionText(expected);
 
-    keyDisplay.textContent = '';
+    refs.keyDisplay.textContent = '';
     const keyEl = document.createElement('div');
     keyEl.className = 'drill-prompt-key';
     if (expected === 'right') {
@@ -4064,22 +4102,21 @@ class RhythmDrillMode extends ModeLifecycle {
       keyEl.textContent = '—';
       keyEl.style.opacity = '0.4';
     }
-    keyDisplay.appendChild(keyEl);
+    refs.keyDisplay.appendChild(keyEl);
+  }
 
-    if (scoreDiv) {
-      const p = this._results.filter(r => r.judgment === 'perfect').length;
-      const g = this._results.filter(r => r.judgment === 'good').length;
-      const m = this._results.filter(r => r.judgment === 'miss').length;
-      scoreDiv.textContent = 'P:' + p + ' G:' + g + ' M:' + m;
+  _updateDrillScore(refs) {
+    if (refs.score) {
+      refs.score.textContent = 'P:' + this._perfectCount + ' G:' + this._goodCount + ' M:' + this._missCount;
     }
+  }
 
-    // Flash beat indicator
+  _updateBeatFlash(refs, currentBeat) {
     const beatPerfTime = this._audioTimeToPerfTime(this._beatTimes[currentBeat]);
     const now = this._clock.now();
-    const flash = document.querySelector('#rhythm-beat-indicator .beat-flash');
-    if (flash) {
+    if (refs.flash) {
       const sinceBeat = now - beatPerfTime;
-      flash.classList.toggle('active', sinceBeat >= 0 && sinceBeat < 100);
+      refs.flash.classList.toggle('active', sinceBeat >= 0 && sinceBeat < 100);
     }
   }
 
@@ -4093,11 +4130,15 @@ class RhythmDrillMode extends ModeLifecycle {
   }
 
   _showTimingFeedback(judgment, timingMs) {
-    const feedback = document.getElementById('rhythm-feedback');
+    const feedback = this._domRefs.feedback;
     if (!feedback) return;
 
     const labels = { perfect: 'PERFECT', good: 'GOOD', miss: 'MISS' };
-    const colors = { perfect: '#16c79a', good: '#f0a500', miss: '#e94560' };
+    const colors = {
+      perfect: 'var(--accent-turquoise)',
+      good: 'var(--accent-yellow)',
+      miss: 'var(--accent-red)'
+    };
 
     feedback.textContent = labels[judgment] + ' (' + Math.round(timingMs) + 'ms)';
     feedback.style.color = colors[judgment];
@@ -4137,9 +4178,9 @@ class RhythmDrillMode extends ModeLifecycle {
     panel.appendChild(title);
 
     const totalJudged = this._results.length;
-    const perfectCount = this._results.filter(r => r.judgment === 'perfect').length;
-    const goodCount = this._results.filter(r => r.judgment === 'good').length;
-    const missCount = this._results.filter(r => r.judgment === 'miss').length;
+    const perfectCount = this._perfectCount;
+    const goodCount = this._goodCount;
+    const missCount = this._missCount;
     const successCount = perfectCount + goodCount;
     const successRate = totalJudged > 0 ? Math.round((successCount / totalJudged) * 100) : 0;
     const avgTiming = totalJudged > 0
@@ -4157,13 +4198,13 @@ class RhythmDrillMode extends ModeLifecycle {
     const breakdown = document.createElement('div');
     breakdown.className = 'rhythm-breakdown';
     const pStat = document.createElement('span');
-    pStat.style.color = '#16c79a';
+    pStat.style.color = 'var(--accent-turquoise)';
     pStat.textContent = 'Perfect: ' + perfectCount;
     const gStat = document.createElement('span');
-    gStat.style.color = '#f0a500';
+    gStat.style.color = 'var(--accent-yellow)';
     gStat.textContent = 'Good: ' + goodCount;
     const mStat = document.createElement('span');
-    mStat.style.color = '#e94560';
+    mStat.style.color = 'var(--accent-red)';
     mStat.textContent = 'Miss: ' + missCount;
     breakdown.appendChild(pStat);
     breakdown.appendChild(gStat);

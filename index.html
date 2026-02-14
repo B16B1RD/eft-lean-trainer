@@ -106,6 +106,11 @@ html, body {
   border-color: var(--accent-turquoise);
 }
 
+.toggle-btn:focus-visible {
+  outline: 2px solid var(--accent-turquoise);
+  outline-offset: 2px;
+}
+
 #mode-select {
   padding: 4px 8px;
   font-size: 11px;
@@ -956,6 +961,11 @@ html, body {
         <button class="toggle-btn active" data-lean-mode="hold">Hold</button>
         <button class="toggle-btn" data-lean-mode="toggle">Toggle</button>
       </div>
+      <div class="toggle-group" role="group" aria-label="リーン方向">
+        <span>Layout:</span>
+        <button class="toggle-btn active" data-lean-dir="reversed" aria-pressed="true">Q=右 E=左</button>
+        <button class="toggle-btn" data-lean-dir="standard" aria-pressed="false">EFT標準</button>
+      </div>
       <select id="mode-select">
         <option value="free">Free Practice</option>
         <option value="reaction">Key Reaction</option>
@@ -987,9 +997,9 @@ html, body {
       <!-- Key Indicators -->
       <div id="key-indicators">
         <div class="key-row">
-          <div class="key lean-left" data-key="KeyQ">Q</div>
+          <div class="key" data-key="KeyQ">Q</div>
           <div class="key" data-key="KeyW">W</div>
-          <div class="key lean-right" data-key="KeyE">E</div>
+          <div class="key" data-key="KeyE">E</div>
         </div>
         <div class="key-row">
           <div class="key" data-key="KeyA">A</div>
@@ -1062,6 +1072,8 @@ class InputManager {
     this.pressedKeys = new Set();
     this.leanState = 'neutral';
     this.leanMode = 'hold';
+    this.useEftStandard = false;
+    this._keyToLean = { KeyQ: 'right', KeyE: 'left' };
     this._listeners = {};
     this._keyPressTimestamps = new Map();
     this.SIMULTANEOUS_WINDOW = 80;
@@ -1121,25 +1133,19 @@ class InputManager {
     if (code !== 'KeyQ' && code !== 'KeyE') return;
 
     const prevState = this.leanState;
+    const leanDir = this._keyToLean[code];
+    const otherKey = code === 'KeyQ' ? 'KeyE' : 'KeyQ';
+    const otherDir = this._keyToLean[otherKey];
 
     if (this.leanMode === 'hold') {
       if (eventType === 'keydown') {
-        if (code === 'KeyQ') this.leanState = 'left';
-        else if (code === 'KeyE') this.leanState = 'right';
+        this.leanState = leanDir;
       } else {
-        if (code === 'KeyQ') {
-          this.leanState = this.pressedKeys.has('KeyE') ? 'right' : 'neutral';
-        } else if (code === 'KeyE') {
-          this.leanState = this.pressedKeys.has('KeyQ') ? 'left' : 'neutral';
-        }
+        this.leanState = this.pressedKeys.has(otherKey) ? otherDir : 'neutral';
       }
     } else {
       if (eventType === 'keydown') {
-        if (code === 'KeyQ') {
-          this.leanState = this.leanState === 'left' ? 'neutral' : 'left';
-        } else if (code === 'KeyE') {
-          this.leanState = this.leanState === 'right' ? 'neutral' : 'right';
-        }
+        this.leanState = this.leanState === leanDir ? 'neutral' : leanDir;
       }
     }
 
@@ -1203,6 +1209,31 @@ class InputManager {
     this.resetState();
   }
 
+  setLeanDirection(useEftStandard) {
+    this.useEftStandard = !!useEftStandard;
+    this._keyToLean = useEftStandard
+      ? { KeyQ: 'left', KeyE: 'right' }
+      : { KeyQ: 'right', KeyE: 'left' };
+    this.resetState();
+    this._updateKeyIndicatorClasses();
+  }
+
+  _updateKeyIndicatorClasses() {
+    const qEl = document.querySelector('.key[data-key="KeyQ"]');
+    const eEl = document.querySelector('.key[data-key="KeyE"]');
+    if (!qEl || !eEl) return;
+    qEl.classList.remove('lean-left', 'lean-right');
+    eEl.classList.remove('lean-left', 'lean-right');
+    qEl.classList.add('lean-' + this._keyToLean.KeyQ);
+    eEl.classList.add('lean-' + this._keyToLean.KeyE);
+  }
+
+  getLeanKeyForDirection(direction) {
+    if (direction === 'left') return this._keyToLean.KeyQ === 'left' ? 'KeyQ' : 'KeyE';
+    if (direction === 'right') return this._keyToLean.KeyQ === 'right' ? 'KeyQ' : 'KeyE';
+    return null;
+  }
+
   destroy() {
     document.removeEventListener('keydown', this._onKeyDown);
     document.removeEventListener('keyup', this._onKeyUp);
@@ -1219,18 +1250,27 @@ class Storage {
     this.KEY = 'eft-lean-trainer';
     this.BACKUP_PREFIX = 'eft-lean-trainer-backup-';
     this.MAX_BACKUPS = 3;
-    this.CURRENT_VERSION = 1;
+    this.CURRENT_VERSION = 2;
 
     this.DEFAULTS = {
-      schemaVersion: 1,
-      settings: { leanMode: 'hold' },
+      schemaVersion: 2,
+      settings: { leanMode: 'hold', useEftStandard: false },
       reactionDrill: { levels: {}, best: {} },
       comboDrill: { techniques: {}, unlocked: ['jiggle_right'] },
       rhythmDrill: { maxBPM: 60, perfectRate: 0 },
       kro: { diagnosis: null, failedCombos: {}, drillFailCounts: {} }
     };
 
-    this.MIGRATIONS = {};
+    this.MIGRATIONS = {
+      1: function(data) {
+        if (!data.settings) data.settings = {};
+        if (data.settings.useEftStandard === undefined) {
+          data.settings.useEftStandard = false;
+        }
+        data.schemaVersion = 2;
+        return data;
+      }
+    };
   }
 
   load() {
@@ -3083,6 +3123,18 @@ class ComboDrillMode extends ModeLifecycle {
     this._demoAnimating = false;
   }
 
+  _resolveKey(key) {
+    if (!this._input.useEftStandard) {
+      if (key === 'KeyQ') return 'KeyE';
+      if (key === 'KeyE') return 'KeyQ';
+    }
+    return key;
+  }
+
+  _resolveStepKeys(keys) {
+    return keys.map(k => this._resolveKey(k));
+  }
+
   enter() {
     super.enter();
     this._drillPanel = document.getElementById('drill-panel');
@@ -3263,7 +3315,8 @@ class ComboDrillMode extends ModeLifecycle {
       this._waitingForInput = true;
       this._firstKeyTime = 0;
 
-      this._pendingKeys = new Set(step.keys);
+      this._resolvedKeys = this._resolveStepKeys(step.keys);
+      this._pendingKeys = new Set(this._resolvedKeys);
 
       // maxDuration timeout
       this._addTimeout(() => {
@@ -3448,6 +3501,7 @@ class ComboDrillMode extends ModeLifecycle {
   }
 
   _renderDemoSteps(container, combo) {
+    const resolvedSteps = combo.steps.map(s => this._resolveStepKeys(s.keys));
     for (let i = 0; i < combo.steps.length; i++) {
       if (i > 0) {
         const arrow = document.createElement('span');
@@ -3466,7 +3520,7 @@ class ComboDrillMode extends ModeLifecycle {
 
       const keysSpan = document.createElement('span');
       keysSpan.className = 'step-keys';
-      keysSpan.textContent = step.keys.map(k => this._keyNames[k] || k).join('+');
+      keysSpan.textContent = resolvedSteps[i].map(k => this._keyNames[k] || k).join('+');
 
       stepEl.appendChild(actionSpan);
       stepEl.appendChild(keysSpan);
@@ -3542,6 +3596,7 @@ class ComboDrillMode extends ModeLifecycle {
 
     // Current step instruction
     const step = combo.steps[this._currentStepIndex];
+    const resolvedKeys = this._resolveStepKeys(step.keys);
     const prompt = document.createElement('div');
     prompt.className = 'drill-prompt';
 
@@ -3553,7 +3608,7 @@ class ComboDrillMode extends ModeLifecycle {
     actionLabel.style.marginBottom = '6px';
     actionLabel.textContent = step.action === 'press' ? 'PRESS' : 'RELEASE';
 
-    for (let i = 0; i < step.keys.length; i++) {
+    for (let i = 0; i < resolvedKeys.length; i++) {
       if (i > 0) {
         const plus = document.createElement('span');
         plus.className = 'drill-prompt-plus';
@@ -3562,7 +3617,7 @@ class ComboDrillMode extends ModeLifecycle {
       }
       const keyEl = document.createElement('div');
       keyEl.className = 'drill-prompt-key';
-      keyEl.textContent = this._keyNames[step.keys[i]] || step.keys[i];
+      keyEl.textContent = this._keyNames[resolvedKeys[i]] || resolvedKeys[i];
       keysDiv.appendChild(keyEl);
     }
 
@@ -4279,10 +4334,12 @@ class RhythmDrillMode extends ModeLifecycle {
     const keyEl = document.createElement('div');
     keyEl.className = 'drill-prompt-key';
     if (expected === 'right') {
-      keyEl.textContent = 'E';
+      const rightKey = this._input.getLeanKeyForDirection('right');
+      keyEl.textContent = rightKey === 'KeyQ' ? 'Q' : 'E';
       keyEl.classList.add('active');
     } else if (expected === 'left') {
-      keyEl.textContent = 'Q';
+      const leftKey = this._input.getLeanKeyForDirection('left');
+      keyEl.textContent = leftKey === 'KeyQ' ? 'Q' : 'E';
       keyEl.classList.add('active');
     } else {
       keyEl.textContent = '—';
@@ -4525,6 +4582,11 @@ class PlaceholderMode extends ModeLifecycle {
     input.setLeanMode(appData.settings.leanMode);
   }
 
+  // Apply saved lean direction
+  if (appData.settings) {
+    input.setLeanDirection(!!appData.settings.useEftStandard);
+  }
+
   // --- UI: Key Indicators ---
   const keyElements = {};
   document.querySelectorAll('.key[data-key]').forEach(el => {
@@ -4576,6 +4638,28 @@ class PlaceholderMode extends ModeLifecycle {
     } else {
       btn.classList.remove('active');
     }
+  });
+
+  // --- UI: Lean Direction Toggle ---
+  const leanDirBtns = document.querySelectorAll('.toggle-btn[data-lean-dir]');
+  leanDirBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const isStandard = btn.dataset.leanDir === 'standard';
+      input.setLeanDirection(isStandard);
+      leanDirBtns.forEach(b => {
+        const bIsStandard = b.dataset.leanDir === 'standard';
+        const isActive = bIsStandard === isStandard;
+        b.classList.toggle('active', isActive);
+        b.setAttribute('aria-pressed', String(isActive));
+      });
+      appData.settings.useEftStandard = isStandard;
+      storage.save(appData);
+    });
+
+    const isStandard = btn.dataset.leanDir === 'standard';
+    const isActive = isStandard === !!appData.settings.useEftStandard;
+    btn.classList.toggle('active', isActive);
+    btn.setAttribute('aria-pressed', String(isActive));
   });
 
   // --- Register Modes ---
@@ -5333,6 +5417,27 @@ class PlaceholderMode extends ModeLifecycle {
     drillMode._loadProgress();
     assert('alternating_peek unlocked at 80%', drillMode._unlockedCombos.has('alternating_peek'));
 
+    // --- Key resolution with lean direction ---
+    // Default (reversed): Q=right, E=left → swap KeyQ↔KeyE
+    input.setLeanDirection(false);
+    assert('Reversed: _resolveKey(KeyQ) → KeyE', drillMode._resolveKey('KeyQ') === 'KeyE');
+    assert('Reversed: _resolveKey(KeyE) → KeyQ', drillMode._resolveKey('KeyE') === 'KeyQ');
+    assert('Reversed: _resolveKey(KeyD) → KeyD', drillMode._resolveKey('KeyD') === 'KeyD');
+
+    const reversedKeys = drillMode._resolveStepKeys(['KeyD', 'KeyE']);
+    assert('Reversed: [KeyD, KeyE] → [KeyD, KeyQ]', reversedKeys[0] === 'KeyD' && reversedKeys[1] === 'KeyQ');
+
+    // EFT Standard: no swap
+    input.setLeanDirection(true);
+    assert('Standard: _resolveKey(KeyQ) → KeyQ', drillMode._resolveKey('KeyQ') === 'KeyQ');
+    assert('Standard: _resolveKey(KeyE) → KeyE', drillMode._resolveKey('KeyE') === 'KeyE');
+
+    const standardKeys = drillMode._resolveStepKeys(['KeyD', 'KeyE']);
+    assert('Standard: [KeyD, KeyE] → [KeyD, KeyE]', standardKeys[0] === 'KeyD' && standardKeys[1] === 'KeyE');
+
+    // Reset to default
+    input.setLeanDirection(false);
+
     // --- State transitions ---
     drillMode._selectedCombo = COMBOS[0];
     assert('state is idle after enter', drillMode.state === 'idle');
@@ -5444,8 +5549,9 @@ class PlaceholderMode extends ModeLifecycle {
     // Tests access _updateLeanState directly, bypassing event dispatch.
     const testInput = new InputManager();
 
-    // === Hold Mode (8 patterns) ===
+    // === Hold Mode (8 patterns) — EFT Standard layout (Q=left, E=right) ===
     // Key order mirrors production: keydown → pressedKeys.add → _updateLeanState
+    testInput.setLeanDirection(true); // EFT standard for legacy tests
     testInput.setLeanMode('hold');
 
     // Pattern 1: neutral + Q keydown → left
@@ -5544,6 +5650,74 @@ class PlaceholderMode extends ModeLifecycle {
     testInput.leanState = 'right';
     testInput._updateLeanState('KeyQ', 'keydown');
     assert('Toggle: right + Q → left', testInput.leanState === 'left');
+
+    // === Reversed Direction (default: Q=right, E=left) ===
+    testInput.setLeanDirection(false);
+    testInput.setLeanMode('hold');
+
+    // Reversed Hold: Q keydown → right (not left)
+    testInput.leanState = 'neutral';
+    testInput.pressedKeys.clear();
+    testInput.pressedKeys.add('KeyQ');
+    testInput._updateLeanState('KeyQ', 'keydown');
+    assert('Reversed Hold: Q down → right', testInput.leanState === 'right');
+
+    // Reversed Hold: E keydown → left (not right)
+    testInput.leanState = 'neutral';
+    testInput.pressedKeys.clear();
+    testInput.pressedKeys.add('KeyE');
+    testInput._updateLeanState('KeyE', 'keydown');
+    assert('Reversed Hold: E down → left', testInput.leanState === 'left');
+
+    // Reversed Hold: Q keyup with E held → left
+    testInput.leanState = 'right';
+    testInput.pressedKeys.clear();
+    testInput.pressedKeys.add('KeyQ');
+    testInput.pressedKeys.add('KeyE');
+    testInput.pressedKeys.delete('KeyQ');
+    testInput._updateLeanState('KeyQ', 'keyup');
+    assert('Reversed Hold: right(Q+E) + Q up → left', testInput.leanState === 'left');
+
+    // Reversed Toggle: Q → right
+    testInput.setLeanMode('toggle');
+    testInput.leanState = 'neutral';
+    testInput._updateLeanState('KeyQ', 'keydown');
+    assert('Reversed Toggle: neutral + Q → right', testInput.leanState === 'right');
+
+    // Reversed Toggle: E → left
+    testInput.leanState = 'neutral';
+    testInput._updateLeanState('KeyE', 'keydown');
+    assert('Reversed Toggle: neutral + E → left', testInput.leanState === 'left');
+
+    // Reversed Toggle: right + Q → neutral (same direction cancels)
+    testInput.leanState = 'right';
+    testInput._updateLeanState('KeyQ', 'keydown');
+    assert('Reversed Toggle: right + Q → neutral', testInput.leanState === 'neutral');
+
+    // === EFT Standard Direction (Q=left, E=right) ===
+    testInput.setLeanDirection(true);
+    testInput.setLeanMode('hold');
+
+    testInput.leanState = 'neutral';
+    testInput.pressedKeys.clear();
+    testInput.pressedKeys.add('KeyQ');
+    testInput._updateLeanState('KeyQ', 'keydown');
+    assert('EFT Standard Hold: Q down → left', testInput.leanState === 'left');
+
+    testInput.leanState = 'neutral';
+    testInput.pressedKeys.clear();
+    testInput.pressedKeys.add('KeyE');
+    testInput._updateLeanState('KeyE', 'keydown');
+    assert('EFT Standard Hold: E down → right', testInput.leanState === 'right');
+
+    // === getLeanKeyForDirection ===
+    testInput.setLeanDirection(false); // reversed
+    assert('Reversed: right key is KeyQ', testInput.getLeanKeyForDirection('right') === 'KeyQ');
+    assert('Reversed: left key is KeyE', testInput.getLeanKeyForDirection('left') === 'KeyE');
+
+    testInput.setLeanDirection(true); // standard
+    assert('Standard: left key is KeyQ', testInput.getLeanKeyForDirection('left') === 'KeyQ');
+    assert('Standard: right key is KeyE', testInput.getLeanKeyForDirection('right') === 'KeyE');
 
     // Cleanup
     testInput.destroy();
@@ -5689,8 +5863,9 @@ class PlaceholderMode extends ModeLifecycle {
       // Test 1: load returns defaults when no data
       localStorage.removeItem(testStore.KEY);
       const defaults = testStore.load();
-      assert('load returns defaults when empty', defaults.schemaVersion === 1);
+      assert('load returns defaults when empty', defaults.schemaVersion === 2);
       assert('defaults have settings', defaults.settings && defaults.settings.leanMode === 'hold');
+      assert('defaults have useEftStandard', defaults.settings.useEftStandard === false);
       assert('defaults have kro', defaults.kro !== undefined);
 
       // Test 2: save and load roundtrip
@@ -5708,7 +5883,7 @@ class PlaceholderMode extends ModeLifecycle {
       // Test 4: corrupted JSON fallback
       localStorage.setItem(testStore.KEY, '{invalid json!!!');
       const recovered = testStore.load();
-      assert('corrupted data returns defaults', recovered.schemaVersion === 1);
+      assert('corrupted data returns defaults', recovered.schemaVersion === 2);
       assert('corrupted data resets leanMode', recovered.settings.leanMode === 'hold');
 
       // Verify backup was created
@@ -5738,29 +5913,49 @@ class PlaceholderMode extends ModeLifecycle {
       // Test 7: migration map executes (uses isolated Storage instance with test key)
       const migrateStore = new Storage();
       migrateStore.KEY = 'eft-lean-trainer-migrate-test-' + Date.now();
-      migrateStore.CURRENT_VERSION = 2;
+      migrateStore.CURRENT_VERSION = 3;
       migrateStore.MIGRATIONS = {
         1: function(data) {
-          data.newField = 'migrated';
+          if (!data.settings) data.settings = {};
+          if (data.settings.useEftStandard === undefined) data.settings.useEftStandard = false;
           data.schemaVersion = 2;
+          return data;
+        },
+        2: function(data) {
+          data.newField = 'migrated';
+          data.schemaVersion = 3;
           return data;
         }
       };
       const v1Data = { schemaVersion: 1, settings: { leanMode: 'hold' } };
       const migrated = migrateStore.migrate(v1Data);
-      assert('migration updates version', migrated.schemaVersion === 2);
+      assert('migration updates version', migrated.schemaVersion === 3);
       assert('migration adds new field', migrated.newField === 'migrated');
+      assert('migration adds useEftStandard', migrated.settings.useEftStandard === false);
       localStorage.removeItem(migrateStore.KEY);
+
+      // Test 7b: v1→v2 migration adds useEftStandard
+      const v1to2Data = { schemaVersion: 1, settings: { leanMode: 'toggle' } };
+      const migratedV2 = testStore.migrate(v1to2Data);
+      assert('v1→v2 migration sets version to 2', migratedV2.schemaVersion === 2);
+      assert('v1→v2 migration adds useEftStandard', migratedV2.settings.useEftStandard === false);
+      assert('v1→v2 migration preserves leanMode', migratedV2.settings.leanMode === 'toggle');
+
+      // Test 7c: v1 data without settings object
+      const v1NoSettings = { schemaVersion: 1 };
+      const migratedNoSettings = testStore.migrate(v1NoSettings);
+      assert('v1→v2 creates settings if missing', migratedNoSettings.settings !== undefined);
+      assert('v1→v2 adds useEftStandard to new settings', migratedNoSettings.settings.useEftStandard === false);
 
       // Test 8: invalid schemaVersion triggers fallback
       localStorage.setItem(testStore.KEY, JSON.stringify({ schemaVersion: -1 }));
       const invalidSchema = testStore.load();
-      assert('invalid schema version triggers fallback', invalidSchema.schemaVersion === 1);
+      assert('invalid schema version triggers fallback', invalidSchema.schemaVersion === 2);
 
       // Test 9: non-integer schemaVersion triggers fallback
       localStorage.setItem(testStore.KEY, JSON.stringify({ schemaVersion: 1.5 }));
       const floatSchema = testStore.load();
-      assert('float schema version triggers fallback', floatSchema.schemaVersion === 1);
+      assert('float schema version triggers fallback', floatSchema.schemaVersion === 2);
 
     } finally {
       cleanupTestKeys();

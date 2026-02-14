@@ -1058,16 +1058,160 @@ class Renderer {
 }
 
 // ============================================================
+// AudioEngine — AudioContext based sound engine
+// ============================================================
+class AudioEngine {
+  constructor() {
+    this._audioCtx = null;
+    this._lastError = null;
+    this._onVisibilityChange = this._handleVisibilityChange.bind(this);
+  }
+
+  /**
+   * Initialize AudioContext. Must be called within a user gesture (click/keydown).
+   * @returns {Promise<void>}
+   */
+  async init() {
+    if (!this._audioCtx) {
+      this._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      document.addEventListener('visibilitychange', this._onVisibilityChange);
+    }
+
+    if (this._audioCtx.state === 'suspended') {
+      try {
+        await this._audioCtx.resume();
+        this._lastError = null;
+      } catch (e) {
+        this._lastError = e;
+        throw e;
+      }
+    }
+  }
+
+  /**
+   * Schedule a short beat sound at the given AudioContext time.
+   * Uses a square wave oscillator for a percussive click sound.
+   * @param {number} time - AudioContext.currentTime value to play at
+   */
+  playBeat(time) {
+    if (!this._audioCtx || this._audioCtx.state !== 'running') return;
+
+    const ctx = this._audioCtx;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(880, time);
+
+    gain.gain.setValueAtTime(0.3, time);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(time);
+    osc.stop(time + 0.05);
+  }
+
+  /**
+   * Resume AudioContext. Returns a Promise.
+   * @returns {Promise<void>}
+   */
+  async resume() {
+    if (!this._audioCtx) return;
+    try {
+      await this._audioCtx.resume();
+      this._lastError = null;
+    } catch (e) {
+      this._lastError = e;
+      throw e;
+    }
+  }
+
+  /**
+   * Suspend AudioContext. Returns a Promise.
+   * @returns {Promise<void>}
+   */
+  async suspend() {
+    if (!this._audioCtx) return;
+    try {
+      await this._audioCtx.suspend();
+    } catch (e) {
+      this._lastError = e;
+      throw e;
+    }
+  }
+
+  /**
+   * Check if AudioContext is in 'running' state and ready to play.
+   * @returns {boolean}
+   */
+  isReady() {
+    return this._audioCtx !== null && this._audioCtx.state === 'running';
+  }
+
+  /**
+   * Get current AudioContext state.
+   * @returns {string} 'suspended' | 'running' | 'closed' | 'uninitialized'
+   */
+  get state() {
+    return this._audioCtx ? this._audioCtx.state : 'uninitialized';
+  }
+
+  /**
+   * Get the underlying AudioContext's currentTime.
+   * @returns {number}
+   */
+  get currentTime() {
+    return this._audioCtx ? this._audioCtx.currentTime : 0;
+  }
+
+  /**
+   * Get the last error from resume/suspend operations.
+   * @returns {Error|null}
+   */
+  get lastError() {
+    return this._lastError;
+  }
+
+  /**
+   * Handle visibility change for background recovery.
+   * When returning from background, check and attempt resume.
+   */
+  _handleVisibilityChange() {
+    if (!document.hidden && this._audioCtx && this._audioCtx.state === 'suspended') {
+      this._audioCtx.resume().catch(e => {
+        this._lastError = e;
+        console.warn('[AudioEngine] Failed to resume after visibility change:', e);
+      });
+    }
+  }
+
+  /**
+   * Destroy AudioContext and clean up resources.
+   * Only call on app teardown, NOT on mode switch.
+   */
+  destroy() {
+    document.removeEventListener('visibilitychange', this._onVisibilityChange);
+    if (this._audioCtx) {
+      this._audioCtx.close().catch(() => {});
+      this._audioCtx = null;
+    }
+  }
+}
+
+// ============================================================
 // App Initialization
 // ============================================================
 (function() {
-  let clock, input, storage, appData, renderer;
+  let clock, input, storage, appData, renderer, audioEngine;
   try {
     clock = new GameClock();
     input = new InputManager();
     storage = new Storage();
     appData = storage.load();
     renderer = new Renderer(document.getElementById('game-canvas'));
+    audioEngine = new AudioEngine();
   } catch (initError) {
     console.error('[App] Initialization failed:', initError);
     const banner = document.getElementById('warning-banner');
@@ -1234,9 +1378,11 @@ class Renderer {
     storage,
     appData,
     renderer,
+    audioEngine,
     destroy() {
       resizeController.abort();
       renderer.destroy();
+      audioEngine.destroy();
     }
   });
 })();

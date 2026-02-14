@@ -1717,16 +1717,37 @@ class FreePracticeMode extends ModeLifecycle {
   _updateDrillPanel() {
     const panel = document.getElementById('drill-panel');
     if (!panel) return;
-    panel.innerHTML =
-      '<div class="free-practice-info">' +
-        '<div class="fp-title">FREE PRACTICE</div>' +
-        '<div class="fp-controls">Move: WASD &nbsp;|&nbsp; Lean: Q / E</div>' +
-        '<div class="fp-legend">' +
-          'Peek around cover to spot enemies.<br>' +
-          '<span class="fp-legend-visible">Green ray</span> = visible &nbsp; ' +
-          '<span class="fp-legend-blocked">Red ray</span> = blocked' +
-        '</div>' +
-      '</div>';
+    panel.textContent = '';
+    const info = document.createElement('div');
+    info.className = 'free-practice-info';
+
+    const title = document.createElement('div');
+    title.className = 'fp-title';
+    title.textContent = 'FREE PRACTICE';
+    info.appendChild(title);
+
+    const controls = document.createElement('div');
+    controls.className = 'fp-controls';
+    controls.textContent = 'Move: WASD  |  Lean: Q / E';
+    info.appendChild(controls);
+
+    const legend = document.createElement('div');
+    legend.className = 'fp-legend';
+    legend.appendChild(document.createTextNode('Peek around cover to spot enemies.'));
+    legend.appendChild(document.createElement('br'));
+    const greenSpan = document.createElement('span');
+    greenSpan.className = 'fp-legend-visible';
+    greenSpan.textContent = 'Green ray';
+    legend.appendChild(greenSpan);
+    legend.appendChild(document.createTextNode(' = visible \u00A0 '));
+    const redSpan = document.createElement('span');
+    redSpan.className = 'fp-legend-blocked';
+    redSpan.textContent = 'Red ray';
+    legend.appendChild(redSpan);
+    legend.appendChild(document.createTextNode(' = blocked'));
+    info.appendChild(legend);
+
+    panel.appendChild(info);
   }
 
   // --- Warmup Guide ---
@@ -1734,11 +1755,22 @@ class FreePracticeMode extends ModeLifecycle {
   _showWarmupGuide() {
     this._warmupActive = true;
     this._warmupStep = 0;
+    this._previousFocus = document.activeElement;
     const guide = document.getElementById('warmup-guide');
     if (!guide) return;
+    guide.setAttribute('role', 'dialog');
+    guide.setAttribute('aria-label', 'Warmup Guide');
+    guide.setAttribute('aria-modal', 'true');
     guide.classList.add('active');
 
+    const progressEl = document.getElementById('warmup-progress');
+    if (progressEl) progressEl.setAttribute('aria-live', 'polite');
+
     this._renderWarmupStep();
+
+    // Focus the skip button so keyboard users can interact
+    const skipBtn = document.getElementById('warmup-skip');
+    if (skipBtn) skipBtn.focus();
 
     // Key handler for warmup
     this._onWarmupKey = (data) => {
@@ -1781,10 +1813,13 @@ class FreePracticeMode extends ModeLifecycle {
     if (keyEl) { keyEl.textContent = step.label; keyEl.classList.remove('pressed'); }
     if (descEl) descEl.textContent = step.desc;
     if (progressEl) {
-      progressEl.innerHTML = this._warmupSteps.map((_, i) => {
-        const cls = i < this._warmupStep ? 'done' : i === this._warmupStep ? 'current' : '';
-        return '<div class="warmup-dot ' + cls + '"></div>';
-      }).join('');
+      progressEl.textContent = '';
+      this._warmupSteps.forEach((_, i) => {
+        const dot = document.createElement('div');
+        dot.className = 'warmup-dot' +
+          (i < this._warmupStep ? ' done' : i === this._warmupStep ? ' current' : '');
+        progressEl.appendChild(dot);
+      });
     }
   }
 
@@ -1800,7 +1835,14 @@ class FreePracticeMode extends ModeLifecycle {
 
   _hideWarmupGuide() {
     const guide = document.getElementById('warmup-guide');
-    if (guide) guide.classList.remove('active');
+    if (guide) {
+      guide.classList.remove('active');
+      guide.removeAttribute('aria-modal');
+    }
+    if (this._previousFocus && typeof this._previousFocus.focus === 'function') {
+      this._previousFocus.focus();
+      this._previousFocus = null;
+    }
   }
 }
 

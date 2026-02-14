@@ -329,7 +329,7 @@ html, body {
   <div id="main">
     <!-- Canvas -->
     <div id="canvas-container">
-      <canvas id="game-canvas"></canvas>
+      <canvas id="game-canvas" role="img" aria-label="リーン練習シミュレーション"></canvas>
       <div id="canvas-overlay">AWAITING RENDERER</div>
     </div>
 
@@ -699,19 +699,26 @@ class Storage {
 // Renderer — Canvas drawing engine with raycast visualization
 // ============================================================
 class Renderer {
-  constructor(canvas) {
+  constructor(canvas, config = {}) {
     this._canvas = canvas;
     this._ctx = canvas.getContext('2d');
+    this._displayWidth = 0;
+    this._displayHeight = 0;
 
-    // Constants from design spec
-    this.GRID_SIZE = 40;
-    this.CHAR_RADIUS = 15;
-    this.ENEMY_RADIUS = 10;
-    this.FOV_HALF_ANGLE = Math.PI / 6; // 30°
-    this.FOV_RANGE = 250;
-    this.LEAN_OFFSET_X = 20;
-    this.LEAN_ROTATION = (5 * Math.PI) / 180; // 5°
-    this.EXPOSURE_SAMPLES = 16;
+    this.EPSILON = 1e-10;
+
+    // Design-spec constants (configurable via config param for testing)
+    const defaults = {
+      GRID_SIZE: 40,
+      CHAR_RADIUS: 15,
+      ENEMY_RADIUS: 10,
+      FOV_HALF_ANGLE: Math.PI / 6, // 30°
+      FOV_RANGE: 250,
+      LEAN_OFFSET_X: 20,
+      LEAN_ROTATION: (5 * Math.PI) / 180, // 5°
+      EXPOSURE_SAMPLES: 16,
+    };
+    Object.assign(this, defaults, config);
 
     // Colors matching military-dark theme
     this.COLORS = {
@@ -731,18 +738,18 @@ class Renderer {
     };
   }
 
+  get width() { return this._displayWidth; }
+  get height() { return this._displayHeight; }
+
   render(state) {
     const ctx = this._ctx;
-    const w = this._canvas.width;
-    const h = this._canvas.height;
+    const w = this.width;
+    const h = this.height;
     if (w === 0 || h === 0) return;
 
     ctx.clearRect(0, 0, w, h);
 
-    const obstacles = state.obstacles || [];
-    const enemies = state.enemies || [];
-    const char = state.character || { x: w / 2, y: h / 2 };
-    const leanState = state.leanState || 'neutral';
+    const { obstacles, enemies, character: char, leanState } = this._sanitizeState(state, w, h);
 
     // Calculate viewpoint based on lean
     const vp = this._getViewpoint(char.x, char.y, leanState);
@@ -753,16 +760,8 @@ class Renderer {
     this._drawFOV(ctx, vp, frontAngle);
     this._drawObstacles(ctx, obstacles);
 
-    // Raycast and draw rays for each enemy
-    const exposures = [];
-    for (const enemy of enemies) {
-      const inFOV = this._isInFOV(vp.x, vp.y, enemy.x, enemy.y, frontAngle);
-      this._drawRay(ctx, vp.x, vp.y, enemy, obstacles, inFOV);
-      if (inFOV) {
-        const exposure = this._calculateExposure(vp.x, vp.y, enemy, obstacles);
-        exposures.push({ enemy, exposure });
-      }
-    }
+    // Raycast visibility and draw rays
+    const exposures = this._processVisibility(ctx, vp, frontAngle, enemies, obstacles);
 
     this._drawEnemies(ctx, enemies);
     this._drawCharacter(ctx, char.x, char.y, leanState, vp);
@@ -773,12 +772,43 @@ class Renderer {
     }
   }
 
+  _sanitizeState(state, w, h) {
+    return {
+      obstacles: state.obstacles || [],
+      enemies: state.enemies || [],
+      character: state.character || { x: w / 2, y: h / 2 },
+      leanState: state.leanState || 'neutral',
+    };
+  }
+
+  _processVisibility(ctx, vp, frontAngle, enemies, obstacles) {
+    const exposures = [];
+    for (const enemy of enemies) {
+      const inFOV = this._isInFOV(vp.x, vp.y, enemy.x, enemy.y, frontAngle);
+      this._drawRay(ctx, vp.x, vp.y, enemy, obstacles, inFOV);
+      if (inFOV) {
+        const exposure = this._calculateExposure(vp.x, vp.y, enemy, obstacles);
+        exposures.push({ enemy, exposure });
+      }
+    }
+    return exposures;
+  }
+
   resize() {
     const container = this._canvas.parentElement;
-    if (container) {
-      this._canvas.width = container.clientWidth;
-      this._canvas.height = container.clientHeight;
-    }
+    if (!container) return;
+    const dpr = window.devicePixelRatio || 1;
+    this._displayWidth = container.clientWidth;
+    this._displayHeight = container.clientHeight;
+    this._canvas.width = this._displayWidth * dpr;
+    this._canvas.height = this._displayHeight * dpr;
+    this._canvas.style.width = this._displayWidth + 'px';
+    this._canvas.style.height = this._displayHeight + 'px';
+    this._ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  destroy() {
+    this._ctx = null;
   }
 
   // --- Viewpoint calculation ---
@@ -900,7 +930,7 @@ class Renderer {
     const dx = enemy.x - vx;
     const dy = enemy.y - vy;
     const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist === 0) return;
+    if (dist < this.EPSILON) return;
 
     const ndx = dx / dist;
     const ndy = dy / dist;
@@ -956,13 +986,12 @@ class Renderer {
     const dx = tx - vx;
     const dy = ty - vy;
     const angle = Math.atan2(dy, dx);
-    let diff = angle - frontAngle;
-    // Normalize to [-PI, PI]
-    while (diff > Math.PI) diff -= 2 * Math.PI;
-    while (diff < -Math.PI) diff += 2 * Math.PI;
+    const diff = Math.atan2(Math.sin(angle - frontAngle), Math.cos(angle - frontAngle));
     return Math.abs(diff) <= this.FOV_HALF_ANGLE;
   }
 
+  // NOTE: O(enemies * obstacles * samples) complexity.
+  // For large scenes, consider spatial partitioning (grid/BVH) to reduce obstacle checks.
   _calculateExposure(vx, vy, enemy, obstacles) {
     const r = enemy.radius || this.ENEMY_RADIUS;
     let visible = 0;
@@ -976,7 +1005,7 @@ class Renderer {
       const dy = sy - vy;
       const dist = Math.sqrt(dx * dx + dy * dy);
 
-      if (dist === 0) { visible++; continue; }
+      if (dist < this.EPSILON) { visible++; continue; }
 
       const ndx = dx / dist;
       const ndy = dy / dist;
@@ -999,7 +1028,7 @@ class Renderer {
     let tmax = Infinity;
 
     // X slab
-    if (Math.abs(dx) > 1e-10) {
+    if (Math.abs(dx) > this.EPSILON) {
       const invDx = 1 / dx;
       let t1 = (rect.x - ox) * invDx;
       let t2 = (rect.x + rect.w - ox) * invDx;
@@ -1012,7 +1041,7 @@ class Renderer {
     }
 
     // Y slab
-    if (Math.abs(dy) > 1e-10) {
+    if (Math.abs(dy) > this.EPSILON) {
       const invDy = 1 / dy;
       let t1 = (rect.y - oy) * invDy;
       let t2 = (rect.y + rect.h - oy) * invDy;
@@ -1145,9 +1174,8 @@ class Renderer {
   };
 
   function buildDemoScene() {
-    const canvas = renderer._canvas;
-    const cx = canvas.width / 2;
-    const cy = canvas.height * 0.65;
+    const cx = renderer.width / 2;
+    const cy = renderer.height * 0.65;
 
     demoState.character.x = cx;
     demoState.character.y = cy;
@@ -1168,23 +1196,36 @@ class Renderer {
 
   buildDemoScene();
 
-  // --- Render Loop ---
+  // --- Render Loop (dirty-flag gated) ---
+  let dirty = true;
+  let lastLeanState = 'neutral';
+
   function renderLoop() {
-    demoState.leanState = input.leanState;
-    renderer.render(demoState);
+    const currentLean = input.leanState;
+    if (currentLean !== lastLeanState) {
+      lastLeanState = currentLean;
+      demoState.leanState = currentLean;
+      dirty = true;
+    }
+    if (dirty) {
+      renderer.render(demoState);
+      dirty = false;
+    }
     clockDisplay.textContent = (clock.elapsed() / 1000).toFixed(3) + 's';
     requestAnimationFrame(renderLoop);
   }
   requestAnimationFrame(renderLoop);
 
-  // Rebuild scene on resize
+  // Rebuild scene on resize (with cleanup via AbortController)
+  const resizeController = new AbortController();
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
       renderer.resize();
       buildDemoScene();
+      dirty = true;
     }, 150);
-  });
+  }, { signal: resizeController.signal });
 
   // --- Expose for other modules and testing ---
   window.EFTTrainer = Object.freeze({
@@ -1192,7 +1233,11 @@ class Renderer {
     input,
     storage,
     appData,
-    renderer
+    renderer,
+    destroy() {
+      resizeController.abort();
+      renderer.destroy();
+    }
   });
 })();
 </script>

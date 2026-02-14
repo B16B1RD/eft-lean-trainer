@@ -4,8 +4,776 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>EFT Lean Trainer</title>
+<style>
+/* === Reset & Base === */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg-primary: #1a1a2e;
+  --bg-secondary: #16213e;
+  --bg-tertiary: #0f3460;
+  --accent-red: #e94560;
+  --accent-turquoise: #16c79a;
+  --accent-navy: #0f3460;
+  --text-primary: #e0e0e0;
+  --text-secondary: #8899aa;
+  --text-muted: #556677;
+  --key-bg: #2a2a4a;
+  --key-border: #3a3a5a;
+  --key-active: #e94560;
+  --key-lean-left: #16c79a;
+  --key-lean-right: #e94560;
+  --panel-bg: rgba(22, 33, 62, 0.8);
+  --panel-border: rgba(15, 52, 96, 0.6);
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Courier New', 'Consolas', 'Monaco', monospace;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* === Layout === */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 8px 16px;
+}
+
+/* === Header === */
+#header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--panel-border);
+  flex-shrink: 0;
+}
+
+#header h1 {
+  font-size: 18px;
+  font-weight: bold;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--accent-red);
+  text-shadow: 0 0 10px rgba(233, 69, 96, 0.3);
+}
+
+#header-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.toggle-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.toggle-btn {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-family: inherit;
+  background: var(--key-bg);
+  color: var(--text-secondary);
+  border: 1px solid var(--key-border);
+  cursor: pointer;
+  transition: all 0.15s;
+  letter-spacing: 1px;
+}
+
+.toggle-btn:first-of-type { border-radius: 3px 0 0 3px; }
+.toggle-btn:last-of-type { border-radius: 0 3px 3px 0; }
+
+.toggle-btn.active {
+  background: var(--accent-navy);
+  color: var(--accent-turquoise);
+  border-color: var(--accent-turquoise);
+}
+
+#mode-select {
+  padding: 4px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  background: var(--key-bg);
+  color: var(--text-secondary);
+  border: 1px solid var(--key-border);
+  border-radius: 3px;
+  cursor: pointer;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+#mode-select:focus { outline: 1px solid var(--accent-turquoise); }
+
+/* === Main Area === */
+#main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 8px;
+  padding: 8px 0;
+  min-height: 0;
+}
+
+/* === Canvas Area === */
+#canvas-container {
+  flex: 1;
+  min-height: 200px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+}
+
+#game-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#canvas-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 14px;
+  letter-spacing: 2px;
+  pointer-events: none;
+}
+
+/* === Bottom Panel === */
+#bottom-panel {
+  display: flex;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+/* === Key Indicators === */
+#key-indicators {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.key-row {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+}
+
+.key {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--key-bg);
+  border: 1px solid var(--key-border);
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--text-secondary);
+  transition: all 0.08s;
+  text-shadow: none;
+}
+
+.key.active {
+  background: var(--key-active);
+  border-color: var(--key-active);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(233, 69, 96, 0.5);
+  text-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
+}
+
+.key.lean-left.active {
+  background: var(--key-lean-left);
+  border-color: var(--key-lean-left);
+  box-shadow: 0 0 12px rgba(22, 199, 154, 0.5);
+}
+
+.key.lean-right.active {
+  background: var(--key-lean-right);
+  border-color: var(--key-lean-right);
+  box-shadow: 0 0 12px rgba(233, 69, 96, 0.5);
+}
+
+#lean-state-display {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  min-height: 14px;
+}
+
+#lean-state-display.lean-left { color: var(--key-lean-left); }
+#lean-state-display.lean-right { color: var(--key-lean-right); }
+
+/* === Info Panel === */
+#info-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+#drill-panel {
+  flex: 1;
+  padding: 12px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+
+#drill-panel .placeholder {
+  color: var(--text-muted);
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+#settings-bar {
+  padding: 8px 12px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* === Status Bar === */
+#status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+  border-top: 1px solid var(--panel-border);
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+/* === Warning Banner === */
+#warning-banner {
+  display: none;
+  padding: 6px 12px;
+  background: rgba(233, 69, 96, 0.15);
+  border: 1px solid rgba(233, 69, 96, 0.3);
+  border-radius: 4px;
+  color: var(--accent-red);
+  font-size: 11px;
+  text-align: center;
+}
+
+#warning-banner.visible { display: block; }
+</style>
 </head>
 <body>
-<h1>EFT Lean Trainer</h1>
+
+<div id="app">
+  <!-- Warning Banner (for schema version mismatch etc.) -->
+  <div id="warning-banner"></div>
+
+  <!-- Header -->
+  <header id="header">
+    <h1>EFT Lean Trainer</h1>
+    <div id="header-controls">
+      <div class="toggle-group">
+        <span>Lean:</span>
+        <button class="toggle-btn active" data-lean-mode="hold">Hold</button>
+        <button class="toggle-btn" data-lean-mode="toggle">Toggle</button>
+      </div>
+      <select id="mode-select">
+        <option value="free">Free Practice</option>
+        <option value="reaction">Key Reaction</option>
+        <option value="combo">Combo Drill</option>
+        <option value="rhythm">Rhythm Drill</option>
+      </select>
+    </div>
+  </header>
+
+  <!-- Main Area -->
+  <div id="main">
+    <!-- Canvas -->
+    <div id="canvas-container">
+      <canvas id="game-canvas"></canvas>
+      <div id="canvas-overlay">AWAITING RENDERER</div>
+    </div>
+
+    <!-- Bottom: Key Indicators + Info Panel -->
+    <div id="bottom-panel">
+      <!-- Key Indicators -->
+      <div id="key-indicators">
+        <div class="key-row">
+          <div class="key lean-left" data-key="KeyQ">Q</div>
+          <div class="key" data-key="KeyW">W</div>
+          <div class="key lean-right" data-key="KeyE">E</div>
+        </div>
+        <div class="key-row">
+          <div class="key" data-key="KeyA">A</div>
+          <div class="key" data-key="KeyS">S</div>
+          <div class="key" data-key="KeyD">D</div>
+        </div>
+        <div id="lean-state-display">NEUTRAL</div>
+      </div>
+
+      <!-- Info Panel -->
+      <div id="info-panel">
+        <div id="drill-panel">
+          <div class="placeholder">Select a mode to begin</div>
+        </div>
+        <div id="settings-bar">
+          <span>Press WASD + Q/E to practice</span>
+          <span id="clock-display">0.000s</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status Bar -->
+  <div id="status-bar">
+    <span id="status-mode">Mode: Free Practice</span>
+    <span id="status-keys">Keys: 0</span>
+    <span id="status-lean">Lean: Neutral</span>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// GameClock — performance.now() based time management
+// ============================================================
+class GameClock {
+  constructor() {
+    this._startTime = performance.now();
+  }
+
+  now() {
+    return performance.now();
+  }
+
+  elapsed() {
+    return performance.now() - this._startTime;
+  }
+
+  reset() {
+    this._startTime = performance.now();
+  }
+}
+
+// ============================================================
+// InputManager — Key input and lean state management
+// ============================================================
+class InputManager {
+  constructor() {
+    this.pressedKeys = new Set();
+    this.leanState = 'neutral';
+    this.leanMode = 'hold';
+    this._listeners = {};
+    this._keyPressTimestamps = new Map();
+    this.SIMULTANEOUS_WINDOW = 80;
+    this.GAME_KEYS = new Set([
+      'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'Space', 'Escape'
+    ]);
+
+    this._onKeyDown = this._handleKeyDown.bind(this);
+    this._onKeyUp = this._handleKeyUp.bind(this);
+    this._onBlur = this._handleBlur.bind(this);
+    this._onVisibilityChange = this._handleVisibilityChange.bind(this);
+
+    document.addEventListener('keydown', this._onKeyDown);
+    document.addEventListener('keyup', this._onKeyUp);
+    window.addEventListener('blur', this._onBlur);
+    document.addEventListener('visibilitychange', this._onVisibilityChange);
+  }
+
+  _handleKeyDown(e) {
+    if (e.repeat) return;
+
+    const active = document.activeElement;
+    const isInput = active && (
+      active.tagName === 'INPUT' ||
+      active.tagName === 'TEXTAREA' ||
+      active.tagName === 'SELECT'
+    );
+
+    if (this.GAME_KEYS.has(e.code) && !isInput) {
+      e.preventDefault();
+    }
+
+    this.pressedKeys.add(e.code);
+    this._keyPressTimestamps.set(e.code, performance.now());
+
+    this._updateLeanState(e.code, 'keydown');
+    this._emit('keydown', {
+      code: e.code,
+      pressedKeys: new Set(this.pressedKeys),
+      leanState: this.leanState
+    });
+  }
+
+  _handleKeyUp(e) {
+    this.pressedKeys.delete(e.code);
+    this._keyPressTimestamps.delete(e.code);
+
+    this._updateLeanState(e.code, 'keyup');
+    this._emit('keyup', {
+      code: e.code,
+      pressedKeys: new Set(this.pressedKeys),
+      leanState: this.leanState
+    });
+  }
+
+  _updateLeanState(code, eventType) {
+    if (code !== 'KeyQ' && code !== 'KeyE') return;
+
+    const prevState = this.leanState;
+
+    if (this.leanMode === 'hold') {
+      if (eventType === 'keydown') {
+        if (code === 'KeyQ') this.leanState = 'left';
+        else if (code === 'KeyE') this.leanState = 'right';
+      } else {
+        if (code === 'KeyQ') {
+          this.leanState = this.pressedKeys.has('KeyE') ? 'right' : 'neutral';
+        } else if (code === 'KeyE') {
+          this.leanState = this.pressedKeys.has('KeyQ') ? 'left' : 'neutral';
+        }
+      }
+    } else {
+      if (eventType === 'keydown') {
+        if (code === 'KeyQ') {
+          this.leanState = this.leanState === 'left' ? 'neutral' : 'left';
+        } else if (code === 'KeyE') {
+          this.leanState = this.leanState === 'right' ? 'neutral' : 'right';
+        }
+      }
+    }
+
+    if (prevState !== this.leanState) {
+      this._emit('leanchange', { prevState, newState: this.leanState });
+    }
+  }
+
+  _handleBlur() {
+    this.resetState();
+  }
+
+  _handleVisibilityChange() {
+    if (document.hidden) this.resetState();
+  }
+
+  resetState() {
+    this.pressedKeys.clear();
+    this._keyPressTimestamps.clear();
+    const prevState = this.leanState;
+    this.leanState = 'neutral';
+    if (prevState !== 'neutral') {
+      this._emit('leanchange', { prevState, newState: 'neutral' });
+    }
+    this._emit('reset', {});
+  }
+
+  on(event, cb) {
+    if (!this._listeners[event]) this._listeners[event] = [];
+    this._listeners[event].push(cb);
+  }
+
+  off(event, cb) {
+    if (!this._listeners[event]) return;
+    this._listeners[event] = this._listeners[event].filter(fn => fn !== cb);
+  }
+
+  _emit(event, data) {
+    const cbs = this._listeners[event];
+    if (!cbs) return;
+    for (let i = 0; i < cbs.length; i++) cbs[i](data);
+  }
+
+  getKeyPressTime(code) {
+    return this._keyPressTimestamps.get(code) || null;
+  }
+
+  areSimultaneous(codes) {
+    const times = [];
+    for (let i = 0; i < codes.length; i++) {
+      const t = this._keyPressTimestamps.get(codes[i]);
+      if (t == null) return false;
+      times.push(t);
+    }
+    return Math.max(...times) - Math.min(...times) <= this.SIMULTANEOUS_WINDOW;
+  }
+
+  setLeanMode(mode) {
+    this.leanMode = mode;
+    this.resetState();
+  }
+
+  destroy() {
+    document.removeEventListener('keydown', this._onKeyDown);
+    document.removeEventListener('keyup', this._onKeyUp);
+    window.removeEventListener('blur', this._onBlur);
+    document.removeEventListener('visibilitychange', this._onVisibilityChange);
+  }
+}
+
+// ============================================================
+// Storage — localStorage with schema versioning & fallback
+// ============================================================
+class Storage {
+  constructor() {
+    this.KEY = 'eft-lean-trainer';
+    this.BACKUP_PREFIX = 'eft-lean-trainer-backup-';
+    this.MAX_BACKUPS = 3;
+    this.CURRENT_VERSION = 1;
+
+    this.DEFAULTS = {
+      schemaVersion: 1,
+      settings: { leanMode: 'hold' },
+      reactionDrill: { levels: {}, best: {} },
+      comboDrill: { techniques: {}, unlocked: ['jiggle_right'] },
+      rhythmDrill: { maxBPM: 60, perfectRate: 0 },
+      kro: { diagnosis: null, failedCombos: {}, drillFailCounts: {} }
+    };
+
+    this.MIGRATIONS = {};
+  }
+
+  load() {
+    try {
+      const raw = localStorage.getItem(this.KEY);
+      if (!raw) return this._deepClone(this.DEFAULTS);
+
+      const data = JSON.parse(raw);
+      return this.migrate(data);
+    } catch (e) {
+      console.warn('[Storage] Data corrupted, backing up and reinitializing:', e);
+      this._backupCorrupted();
+      const defaults = this._deepClone(this.DEFAULTS);
+      this.save(defaults);
+      return defaults;
+    }
+  }
+
+  save(data) {
+    if (data._readOnly) {
+      console.warn('[Storage] Data is read-only (future schema version). Skipping save.');
+      return;
+    }
+    try {
+      localStorage.setItem(this.KEY, JSON.stringify(data));
+    } catch (e) {
+      console.error('[Storage] Failed to save:', e);
+    }
+  }
+
+  clear() {
+    localStorage.removeItem(this.KEY);
+  }
+
+  migrate(data) {
+    let version = data.schemaVersion || 1;
+
+    if (version > this.CURRENT_VERSION) {
+      console.warn('[Storage] Future schema version detected:', version);
+      data._readOnly = true;
+      return data;
+    }
+
+    while (version < this.CURRENT_VERSION) {
+      const migrateFn = this.MIGRATIONS[version];
+      if (!migrateFn) {
+        console.error('[Storage] Missing migration for version', version);
+        break;
+      }
+      data = migrateFn(data);
+      version++;
+    }
+
+    data.schemaVersion = this.CURRENT_VERSION;
+    return data;
+  }
+
+  _backupCorrupted() {
+    try {
+      const raw = localStorage.getItem(this.KEY);
+      if (raw) {
+        const timestamp = Date.now();
+        localStorage.setItem(this.BACKUP_PREFIX + timestamp, raw);
+        this._pruneBackups();
+      }
+    } catch (e) {
+      console.error('[Storage] Backup failed:', e);
+    }
+  }
+
+  _pruneBackups() {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key.startsWith(this.BACKUP_PREFIX)) {
+        keys.push(key);
+      }
+    }
+    keys.sort().reverse();
+    while (keys.length > this.MAX_BACKUPS) {
+      localStorage.removeItem(keys.pop());
+    }
+  }
+
+  _deepClone(obj) {
+    return JSON.parse(JSON.stringify(obj));
+  }
+}
+
+// ============================================================
+// App Initialization
+// ============================================================
+(function() {
+  const clock = new GameClock();
+  const input = new InputManager();
+  const storage = new Storage();
+
+  const appData = storage.load();
+
+  // Schema version warning
+  if (appData._readOnly) {
+    const banner = document.getElementById('warning-banner');
+    banner.textContent = 'このデータは新しいバージョンで作成されました。一部機能が正しく動作しない可能性があります。最新版をお使いください。';
+    banner.classList.add('visible');
+  }
+
+  // Apply saved lean mode
+  if (appData.settings && appData.settings.leanMode) {
+    input.setLeanMode(appData.settings.leanMode);
+  }
+
+  // --- UI: Key Indicators ---
+  const keyElements = {};
+  document.querySelectorAll('.key[data-key]').forEach(el => {
+    keyElements[el.dataset.key] = el;
+  });
+
+  const leanDisplay = document.getElementById('lean-state-display');
+  const statusKeys = document.getElementById('status-keys');
+  const statusLean = document.getElementById('status-lean');
+  const clockDisplay = document.getElementById('clock-display');
+
+  function updateKeyIndicators(pressedKeys) {
+    for (const [code, el] of Object.entries(keyElements)) {
+      el.classList.toggle('active', pressedKeys.has(code));
+    }
+    statusKeys.textContent = 'Keys: ' + pressedKeys.size;
+  }
+
+  function updateLeanDisplay(state) {
+    const labels = { neutral: 'NEUTRAL', left: '◄ LEFT', right: 'RIGHT ►' };
+    leanDisplay.textContent = labels[state] || 'NEUTRAL';
+    leanDisplay.className = '';
+    if (state === 'left') leanDisplay.classList.add('lean-left');
+    else if (state === 'right') leanDisplay.classList.add('lean-right');
+    statusLean.textContent = 'Lean: ' + (labels[state] || 'Neutral');
+  }
+
+  input.on('keydown', (data) => updateKeyIndicators(data.pressedKeys));
+  input.on('keyup', (data) => updateKeyIndicators(data.pressedKeys));
+  input.on('leanchange', (data) => updateLeanDisplay(data.newState));
+  input.on('reset', () => {
+    updateKeyIndicators(new Set());
+    updateLeanDisplay('neutral');
+  });
+
+  // --- UI: Lean Mode Toggle ---
+  const leanBtns = document.querySelectorAll('.toggle-btn[data-lean-mode]');
+  leanBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.leanMode;
+      input.setLeanMode(mode);
+      leanBtns.forEach(b => b.classList.toggle('active', b.dataset.leanMode === mode));
+      appData.settings.leanMode = mode;
+      storage.save(appData);
+    });
+
+    if (btn.dataset.leanMode === input.leanMode) {
+      btn.classList.add('active');
+    } else {
+      btn.classList.remove('active');
+    }
+  });
+
+  // --- UI: Mode Select ---
+  const modeSelect = document.getElementById('mode-select');
+  const statusMode = document.getElementById('status-mode');
+  const modeLabels = {
+    free: 'Free Practice',
+    reaction: 'Key Reaction',
+    combo: 'Combo Drill',
+    rhythm: 'Rhythm Drill'
+  };
+
+  modeSelect.addEventListener('change', () => {
+    statusMode.textContent = 'Mode: ' + (modeLabels[modeSelect.value] || modeSelect.value);
+  });
+
+  // --- UI: Clock Display ---
+  let rafId = null;
+  function updateClock() {
+    clockDisplay.textContent = (clock.elapsed() / 1000).toFixed(3) + 's';
+    rafId = requestAnimationFrame(updateClock);
+  }
+  rafId = requestAnimationFrame(updateClock);
+
+  // --- Canvas Resize ---
+  const canvas = document.getElementById('game-canvas');
+  function resizeCanvas() {
+    const container = document.getElementById('canvas-container');
+    canvas.width = container.clientWidth;
+    canvas.height = container.clientHeight;
+  }
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+
+  // --- Expose for other modules and testing ---
+  window.EFTTrainer = {
+    clock,
+    input,
+    storage,
+    appData
+  };
+})();
+</script>
+
 </body>
 </html>

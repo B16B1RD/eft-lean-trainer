@@ -613,6 +613,102 @@ html, body {
 }
 .fp-legend-visible { color: var(--accent-turquoise); }
 .fp-legend-blocked { color: var(--accent-red); }
+
+/* === Combo Drill === */
+.combo-technique-list { display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }
+.combo-technique-card {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--bg-secondary); border: 1px solid var(--key-border);
+  border-radius: 4px; padding: 8px 10px; cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+.combo-technique-card:hover:not(.locked) {
+  border-color: var(--accent-turquoise); background: var(--bg-tertiary);
+}
+.combo-technique-card.selected {
+  border-color: var(--accent-turquoise); background: var(--bg-tertiary);
+}
+.combo-technique-card.locked {
+  opacity: 0.4; cursor: not-allowed;
+}
+.drill-btn-secondary { margin-top: 4px; opacity: 0.7; }
+.combo-technique-name {
+  font-size: 12px; font-weight: bold; color: var(--text-primary);
+  letter-spacing: 1px;
+}
+.combo-technique-rate {
+  font-size: 10px; color: var(--text-muted); margin-left: auto;
+}
+.combo-technique-lock {
+  font-size: 10px; color: var(--text-muted); margin-left: auto;
+}
+.combo-description {
+  font-size: 10px; color: var(--text-secondary); padding: 4px 0;
+  line-height: 1.5;
+}
+.combo-demo-area {
+  background: var(--bg-primary); border: 1px solid var(--key-border);
+  border-radius: 4px; padding: 8px; margin: 6px 0; min-height: 40px;
+  display: flex; align-items: center; justify-content: center; gap: 4px;
+  flex-wrap: wrap;
+}
+.combo-demo-step {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 3px 6px; border-radius: 3px; font-size: 11px;
+  background: var(--bg-secondary); color: var(--text-secondary);
+  border: 1px solid transparent; transition: all 0.2s;
+}
+.combo-demo-step.active {
+  background: var(--bg-tertiary); color: var(--accent-turquoise);
+  border-color: var(--accent-turquoise);
+}
+.combo-demo-step.done {
+  background: var(--bg-secondary); color: var(--text-muted);
+  opacity: 0.5;
+}
+.combo-demo-step .step-action {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--text-muted);
+}
+.combo-demo-step .step-keys {
+  font-weight: bold; letter-spacing: 1px;
+}
+.combo-demo-arrow { color: var(--text-muted); font-size: 10px; }
+.combo-repeat-indicator {
+  font-size: 10px; color: var(--text-muted); text-align: center;
+  padding: 2px 0; letter-spacing: 1px;
+}
+.combo-step-progress {
+  display: flex; gap: 3px; justify-content: center; padding: 6px 0;
+}
+.combo-step-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--key-border); transition: background 0.2s;
+}
+.combo-step-dot.done { background: var(--accent-turquoise); }
+.combo-step-dot.active { background: var(--accent-red); box-shadow: 0 0 6px var(--accent-red); }
+.combo-step-dot.fail { background: var(--accent-red); opacity: 0.5; }
+.combo-feedback {
+  font-size: 14px; font-weight: bold; text-align: center;
+  padding: 8px 0; letter-spacing: 2px;
+}
+.combo-feedback.success { color: var(--accent-turquoise); }
+.combo-feedback.fail { color: var(--accent-red); }
+.combo-result-stats {
+  display: flex; gap: 12px; justify-content: center; padding: 6px 0;
+}
+.combo-result-stat { text-align: center; }
+.combo-result-stat-value {
+  font-size: 18px; font-weight: bold; color: var(--accent-turquoise);
+}
+.combo-result-stat-label {
+  font-size: 10px; color: var(--text-muted); letter-spacing: 1px;
+}
+.combo-unlock-msg {
+  font-size: 11px; color: var(--accent-turquoise); text-align: center;
+  padding: 4px 0; letter-spacing: 1px;
+  animation: drill-pulse 1s ease-in-out infinite;
+}
 </style>
 </head>
 <body>
@@ -2662,6 +2758,710 @@ ReactionDrillMode.KRO_MIN_ATTEMPTS = 5;
 ReactionDrillMode.KRO_FAIL_THRESHOLD = 0.6;
 
 // ============================================================
+// Combo Drill Data — Data-driven technique definitions
+// ============================================================
+const COMBOS = [
+  {
+    id: 'jiggle_right',
+    name: 'ジグルピーク右',
+    steps: [
+      { action: 'press', keys: ['KeyE'], maxDuration: 300, simultaneousWindow: 0 },
+      { action: 'release', keys: ['KeyE'], maxDuration: 200, simultaneousWindow: 0 }
+    ],
+    repeatCount: 3,
+    description: '右リーンで素早く出入り。EFTの基本テクニック'
+  },
+  {
+    id: 'strafe_peek_right',
+    name: 'ストレイフピーク右',
+    steps: [
+      { action: 'press', keys: ['KeyD', 'KeyE'], maxDuration: 500, simultaneousWindow: 80 },
+      { action: 'release', keys: ['KeyD', 'KeyE'], maxDuration: 300, simultaneousWindow: 80 },
+      { action: 'press', keys: ['KeyA', 'KeyQ'], maxDuration: 500, simultaneousWindow: 80 },
+      { action: 'release', keys: ['KeyA', 'KeyQ'], maxDuration: 300, simultaneousWindow: 80 }
+    ],
+    repeatCount: 2,
+    description: '右移動+右リーンで飛び出し、左で引く'
+  },
+  {
+    id: 'forward_peek_right',
+    name: '前進ピーク右',
+    steps: [
+      { action: 'press', keys: ['KeyW', 'KeyD', 'KeyE'], maxDuration: 500, simultaneousWindow: 80 },
+      { action: 'release', keys: ['KeyW', 'KeyD', 'KeyE'], maxDuration: 300, simultaneousWindow: 80 }
+    ],
+    repeatCount: 2,
+    description: '前進+右移動+右リーンで素早くピーク'
+  },
+  {
+    id: 'alternating_peek',
+    name: '交互ピーク',
+    steps: [
+      { action: 'press', keys: ['KeyE'], maxDuration: 300, simultaneousWindow: 0 },
+      { action: 'release', keys: ['KeyE'], maxDuration: 200, simultaneousWindow: 0 },
+      { action: 'press', keys: ['KeyQ'], maxDuration: 300, simultaneousWindow: 0 },
+      { action: 'release', keys: ['KeyQ'], maxDuration: 200, simultaneousWindow: 0 }
+    ],
+    repeatCount: 3,
+    description: '右→左と交互にリーン。素早い切り替えが重要'
+  }
+];
+
+// ============================================================
+// ComboDrillMode — Combo drill with data-driven techniques
+// ============================================================
+class ComboDrillMode extends ModeLifecycle {
+  constructor(inputManager, clock, storage, appData) {
+    super('combo');
+    this._input = inputManager;
+    this._clock = clock;
+    this._storage = storage;
+    this._appData = appData;
+    this._drillPanel = null;
+    this._keyNames = ComboDrillMode.KEY_NAMES;
+
+    // Drill state
+    this._selectedCombo = null;
+    this._currentStepIndex = 0;
+    this._currentRepeat = 0;
+    this._stepStartTime = 0;
+    this._pendingKeys = null;
+    this._firstKeyTime = 0;
+    this._stepResults = []; // per-repeat: true/false
+    this._waitingForInput = false;
+
+    // Track per-repeat failure
+    this._currentRepeatHadFailure = false;
+    this._newUnlock = null;
+
+    // Unlocked techniques
+    this._unlockedCombos = new Set();
+
+    // Demo animation state
+    this._demoAnimating = false;
+  }
+
+  enter() {
+    super.enter();
+    this._drillPanel = document.getElementById('drill-panel');
+    this._loadProgress();
+    this._showIdleUI();
+  }
+
+  start() {
+    if (this._state !== 'idle' && this._state !== 'result') return;
+    if (!this._selectedCombo) return;
+    super.start();
+    this._currentStepIndex = 0;
+    this._currentRepeat = 0;
+    this._stepResults = [];
+    this._waitingForInput = false;
+    this._currentRepeatHadFailure = false;
+    this._newUnlock = null;
+    this._showCountdown();
+  }
+
+  pause() {
+    if (this._state !== 'running') return;
+    super.pause();
+    this._waitingForInput = false;
+    this._showPauseUI();
+  }
+
+  resume() {
+    if (this._state !== 'paused') return;
+    super.resume();
+    this._prepareStep();
+  }
+
+  stop() {
+    if (this._state !== 'running' && this._state !== 'paused') return;
+    super.stop();
+    this._waitingForInput = false;
+    this._saveProgress();
+    this._showResultUI();
+  }
+
+  dispose() {
+    this._waitingForInput = false;
+    this._pendingKeys = null;
+    this._demoAnimating = false;
+    super.dispose();
+  }
+
+  // --- Progress Persistence ---
+
+  _loadProgress() {
+    const data = this._appData.comboDrill || { techniques: {}, unlocked: ['jiggle_right'] };
+    this._unlockedCombos = new Set(data.unlocked || ['jiggle_right']);
+    this._unlockedCombos.add('jiggle_right');
+    this._checkUnlocks(data);
+  }
+
+  _checkUnlocks(data) {
+    for (let i = 0; i < ComboDrillMode.UNLOCK_ORDER.length - 1; i++) {
+      const current = ComboDrillMode.UNLOCK_ORDER[i];
+      const next = ComboDrillMode.UNLOCK_ORDER[i + 1];
+      if (data.techniques[current] && data.techniques[current].successRate >= ComboDrillMode.UNLOCK_THRESHOLD) {
+        this._unlockedCombos.add(next);
+      }
+    }
+  }
+
+  _saveProgress() {
+    const combo = this._selectedCombo;
+    if (!combo || this._stepResults.length === 0) return;
+
+    const successCount = this._stepResults.filter(r => r).length;
+    const successRate = successCount / this._stepResults.length;
+
+    const data = this._appData.comboDrill || { techniques: {}, unlocked: [] };
+    data.techniques[combo.id] = data.techniques[combo.id] || { attempts: 0, successRate: 0 };
+    const tech = data.techniques[combo.id];
+    // Rolling average with previous
+    const prevAttempts = tech.attempts || 0;
+    const prevRate = tech.successRate || 0;
+    tech.successRate = prevAttempts === 0
+      ? successRate
+      : (prevRate * prevAttempts + successRate) / (prevAttempts + 1);
+    tech.attempts = prevAttempts + 1;
+    tech.lastPlayed = Date.now();
+
+    // Update unlocked set
+    const prevUnlocked = new Set(this._unlockedCombos);
+    this._checkUnlocks(data);
+    data.unlocked = [...this._unlockedCombos];
+    this._appData.comboDrill = data;
+    this._storage.save(this._appData);
+
+    // Check for new unlocks
+    this._newUnlock = null;
+    for (const id of this._unlockedCombos) {
+      if (!prevUnlocked.has(id)) {
+        this._newUnlock = COMBOS.find(c => c.id === id);
+        break;
+      }
+    }
+  }
+
+  // --- Countdown ---
+
+  _showCountdown() {
+    const panel = this._drillPanel;
+    panel.textContent = '';
+    panel.classList.remove('drill-panel-idle');
+
+    const countdown = document.createElement('div');
+    countdown.className = 'drill-countdown';
+
+    // Remove any existing key handlers before binding new ones (prevents leak on Retry)
+    if (this._onKeyDown) {
+      this._input.off('keydown', this._onKeyDown);
+      this._input.off('keyup', this._onKeyUp);
+    }
+    this._onKeyDown = (data) => this._handleStepKey(data, 'press');
+    this._onKeyUp = (data) => this._handleStepKey(data, 'release');
+    this._input.on('keydown', this._onKeyDown);
+    this._input.on('keyup', this._onKeyUp);
+    // Capture references by value so dispose removes the correct handlers
+    const boundKeyDown = this._onKeyDown;
+    const boundKeyUp = this._onKeyUp;
+    this._addDisposable(() => {
+      this._input.off('keydown', boundKeyDown);
+      this._input.off('keyup', boundKeyUp);
+    });
+
+    countdown.setAttribute('aria-live', 'assertive');
+    countdown.setAttribute('role', 'timer');
+    let count = 3;
+    countdown.textContent = count;
+    panel.appendChild(countdown);
+
+    const tick = () => {
+      count--;
+      if (count > 0) {
+        countdown.textContent = count;
+        this._addTimeout(tick, ComboDrillMode.COUNTDOWN_INTERVAL_MS);
+      } else {
+        this._prepareStep();
+      }
+    };
+    this._addTimeout(tick, ComboDrillMode.COUNTDOWN_INTERVAL_MS);
+  }
+
+  // --- Step State Machine ---
+
+  _prepareStep() {
+    const combo = this._selectedCombo;
+    if (!combo) return;
+
+    // Check if all repeats done
+    if (this._currentRepeat >= combo.repeatCount) {
+      this.stop();
+      return;
+    }
+
+    // Check if all steps in current repeat done
+    if (this._currentStepIndex >= combo.steps.length) {
+      this._currentStepIndex = 0;
+      this._currentRepeat++;
+      if (this._currentRepeat >= combo.repeatCount) {
+        this.stop();
+        return;
+      }
+    }
+
+    this._showStepUI();
+
+    // Small delay before accepting input
+    this._addTimeout(() => {
+      if (this._state !== 'running') return;
+      const step = combo.steps[this._currentStepIndex];
+      this._stepStartTime = this._clock.now();
+      this._waitingForInput = true;
+      this._firstKeyTime = 0;
+
+      this._pendingKeys = new Set(step.keys);
+
+      // maxDuration timeout
+      this._addTimeout(() => {
+        if (this._waitingForInput && this._state === 'running') {
+          this._completeStep(false);
+        }
+      }, step.maxDuration);
+    }, ComboDrillMode.STEP_DELAY_MS);
+  }
+
+  _handleStepKey(data, eventAction) {
+    if (!this._waitingForInput || this._state !== 'running') return;
+
+    const combo = this._selectedCombo;
+    if (!combo) return;
+    const step = combo.steps[this._currentStepIndex];
+
+    // Only handle matching action type (press for keydown, release for keyup)
+    if (step.action !== eventAction) return;
+
+    const code = data.code;
+    if (!this._pendingKeys || !this._pendingKeys.has(code)) return;
+
+    const now = this._clock.now();
+    if (this._firstKeyTime === 0) {
+      this._firstKeyTime = now;
+    }
+
+    this._pendingKeys.delete(code);
+
+    if (this._pendingKeys.size === 0) {
+      // All keys handled — check simultaneity
+      if (step.keys.length > 1 && step.simultaneousWindow > 0) {
+        const elapsed = now - this._firstKeyTime;
+        if (elapsed <= step.simultaneousWindow) {
+          this._completeStep(true);
+        } else {
+          this._completeStep(false);
+        }
+      } else {
+        this._completeStep(true);
+      }
+    }
+  }
+
+  _completeStep(success) {
+    this._waitingForInput = false;
+    this._pendingKeys = null;
+
+    const combo = this._selectedCombo;
+    const isLastStep = this._currentStepIndex >= combo.steps.length - 1;
+
+    if (isLastStep) {
+      // Record repeat result — success only if no steps failed in this repeat
+      this._stepResults.push(success && !this._currentRepeatHadFailure);
+      this._currentRepeatHadFailure = false;
+    } else if (!success) {
+      this._currentRepeatHadFailure = true;
+    }
+
+    // Show brief feedback
+    this._showStepFeedback(success);
+
+    this._addTimeout(() => {
+      if (this._state !== 'running') return;
+      this._currentStepIndex++;
+      this._prepareStep();
+    }, ComboDrillMode.STEP_FEEDBACK_MS);
+  }
+
+  // --- UI Rendering ---
+
+  _showIdleUI() {
+    const panel = this._drillPanel;
+    panel.textContent = '';
+    panel.classList.add('drill-panel-idle');
+
+    const header = document.createElement('div');
+    header.className = 'drill-header';
+    const titleSpan = document.createElement('span');
+    titleSpan.textContent = 'Combo Drill';
+    header.appendChild(titleSpan);
+    panel.appendChild(header);
+
+    panel.appendChild(this._renderTechniqueList());
+
+    if (this._selectedCombo && this._unlockedCombos.has(this._selectedCombo.id)) {
+      this._renderComboDetails(panel, this._selectedCombo);
+    }
+  }
+
+  _renderTechniqueList() {
+    const list = document.createElement('div');
+    list.className = 'combo-technique-list';
+    list.setAttribute('role', 'listbox');
+    list.setAttribute('aria-label', 'Combo techniques');
+
+    for (const combo of COMBOS) {
+      const card = document.createElement('div');
+      card.className = 'combo-technique-card';
+      const isUnlocked = this._unlockedCombos.has(combo.id);
+
+      card.setAttribute('role', 'option');
+      card.setAttribute('tabindex', isUnlocked ? '0' : '-1');
+
+      if (!isUnlocked) {
+        card.classList.add('locked');
+        card.setAttribute('aria-disabled', 'true');
+        card.title = 'Complete the previous technique with 80%+ success rate to unlock';
+      }
+
+      if (this._selectedCombo && this._selectedCombo.id === combo.id) {
+        card.classList.add('selected');
+        card.setAttribute('aria-selected', 'true');
+      }
+
+      const name = document.createElement('span');
+      name.className = 'combo-technique-name';
+      name.textContent = combo.name;
+      card.appendChild(name);
+
+      if (isUnlocked) {
+        const data = this._appData.comboDrill || { techniques: {} };
+        const tech = data.techniques[combo.id];
+        if (tech && tech.attempts > 0) {
+          const rate = document.createElement('span');
+          rate.className = 'combo-technique-rate';
+          rate.textContent = Math.round(tech.successRate * 100) + '%';
+          card.appendChild(rate);
+        }
+
+        const selectHandler = () => {
+          this._selectedCombo = combo;
+          this._showIdleUI();
+        };
+        card.addEventListener('click', selectHandler);
+        card.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            selectHandler();
+          }
+        });
+      } else {
+        const lock = document.createElement('span');
+        lock.className = 'combo-technique-lock';
+        lock.textContent = 'LOCKED';
+        card.appendChild(lock);
+      }
+
+      list.appendChild(card);
+    }
+    return list;
+  }
+
+  _renderComboDetails(panel, combo) {
+    const desc = document.createElement('div');
+    desc.className = 'combo-description';
+    desc.textContent = combo.description;
+    panel.appendChild(desc);
+
+    const demoArea = document.createElement('div');
+    demoArea.className = 'combo-demo-area';
+    this._renderDemoSteps(demoArea, combo);
+    panel.appendChild(demoArea);
+
+    const repeatInfo = document.createElement('div');
+    repeatInfo.className = 'combo-repeat-indicator';
+    repeatInfo.textContent = '× ' + combo.repeatCount + ' repeats';
+    panel.appendChild(repeatInfo);
+
+    const startBtn = document.createElement('button');
+    startBtn.className = 'drill-btn';
+    startBtn.textContent = 'Start Drill';
+    startBtn.addEventListener('click', () => this.start());
+    panel.appendChild(startBtn);
+
+    const demoBtn = document.createElement('button');
+    demoBtn.className = 'drill-btn drill-btn-secondary';
+    demoBtn.textContent = 'Watch Demo';
+    demoBtn.addEventListener('click', () => this._playDemo());
+    panel.appendChild(demoBtn);
+  }
+
+  _renderDemoSteps(container, combo) {
+    for (let i = 0; i < combo.steps.length; i++) {
+      if (i > 0) {
+        const arrow = document.createElement('span');
+        arrow.className = 'combo-demo-arrow';
+        arrow.textContent = '→';
+        container.appendChild(arrow);
+      }
+      const step = combo.steps[i];
+      const stepEl = document.createElement('span');
+      stepEl.className = 'combo-demo-step';
+      stepEl.dataset.stepIndex = i;
+
+      const actionSpan = document.createElement('span');
+      actionSpan.className = 'step-action';
+      actionSpan.textContent = step.action === 'press' ? '▼' : '▲';
+
+      const keysSpan = document.createElement('span');
+      keysSpan.className = 'step-keys';
+      keysSpan.textContent = step.keys.map(k => this._keyNames[k] || k).join('+');
+
+      stepEl.appendChild(actionSpan);
+      stepEl.appendChild(keysSpan);
+      container.appendChild(stepEl);
+    }
+  }
+
+  _playDemo() {
+    if (this._demoAnimating) return;
+    this._demoAnimating = true;
+
+    const combo = this._selectedCombo;
+    if (!combo) return;
+
+    const demoArea = this._drillPanel.querySelector('.combo-demo-area');
+    if (!demoArea) return;
+
+    const stepEls = demoArea.querySelectorAll('.combo-demo-step');
+    let stepIndex = 0;
+
+    const animateStep = () => {
+      if (stepIndex >= stepEls.length || !this._demoAnimating) {
+        // Reset all steps
+        stepEls.forEach(el => { el.classList.remove('active', 'done'); });
+        this._demoAnimating = false;
+        return;
+      }
+
+      // Mark previous as done
+      if (stepIndex > 0) stepEls[stepIndex - 1].classList.replace('active', 'done');
+
+      // Activate current
+      stepEls[stepIndex].classList.add('active');
+      stepIndex++;
+
+      const step = combo.steps[stepIndex - 1];
+      const duration = step.maxDuration * ComboDrillMode.DEMO_SPEED_FACTOR;
+      this._addTimeout(animateStep, Math.max(duration, 150));
+    };
+
+    animateStep();
+  }
+
+  _showStepUI() {
+    const panel = this._drillPanel;
+    panel.textContent = '';
+    panel.classList.remove('drill-panel-idle');
+
+    const combo = this._selectedCombo;
+
+    // Header with progress
+    const header = document.createElement('div');
+    header.className = 'drill-header';
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = combo.name;
+    header.appendChild(nameSpan);
+    const progressSpan = document.createElement('span');
+    progressSpan.textContent = 'Rep ' + (this._currentRepeat + 1) + '/' + combo.repeatCount;
+    header.appendChild(progressSpan);
+    panel.appendChild(header);
+
+    // Step progress dots
+    const dotsDiv = document.createElement('div');
+    dotsDiv.className = 'combo-step-progress';
+    for (let i = 0; i < combo.steps.length; i++) {
+      const dot = document.createElement('div');
+      dot.className = 'combo-step-dot';
+      if (i < this._currentStepIndex) dot.classList.add('done');
+      else if (i === this._currentStepIndex) dot.classList.add('active');
+      dotsDiv.appendChild(dot);
+    }
+    panel.appendChild(dotsDiv);
+
+    // Current step instruction
+    const step = combo.steps[this._currentStepIndex];
+    const prompt = document.createElement('div');
+    prompt.className = 'drill-prompt';
+
+    const keysDiv = document.createElement('div');
+    keysDiv.className = 'drill-prompt-keys';
+
+    const actionLabel = document.createElement('div');
+    actionLabel.className = 'drill-prompt-instruction';
+    actionLabel.style.marginBottom = '6px';
+    actionLabel.textContent = step.action === 'press' ? 'PRESS' : 'RELEASE';
+
+    for (let i = 0; i < step.keys.length; i++) {
+      if (i > 0) {
+        const plus = document.createElement('span');
+        plus.className = 'drill-prompt-plus';
+        plus.textContent = '+';
+        keysDiv.appendChild(plus);
+      }
+      const keyEl = document.createElement('div');
+      keyEl.className = 'drill-prompt-key';
+      keyEl.textContent = this._keyNames[step.keys[i]] || step.keys[i];
+      keysDiv.appendChild(keyEl);
+    }
+
+    prompt.appendChild(actionLabel);
+    prompt.appendChild(keysDiv);
+    panel.appendChild(prompt);
+
+    // Demo sequence at bottom
+    const demoArea = document.createElement('div');
+    demoArea.className = 'combo-demo-area';
+    demoArea.style.marginTop = '8px';
+    this._renderDemoSteps(demoArea, combo);
+    // Highlight current step
+    const stepEls = demoArea.querySelectorAll('.combo-demo-step');
+    stepEls.forEach((el, idx) => {
+      if (idx < this._currentStepIndex) el.classList.add('done');
+      else if (idx === this._currentStepIndex) el.classList.add('active');
+    });
+    panel.appendChild(demoArea);
+  }
+
+  _showStepFeedback(success) {
+    const panel = this._drillPanel;
+    panel.textContent = '';
+    panel.classList.remove('drill-panel-idle');
+
+    const combo = this._selectedCombo;
+
+    // Header
+    const header = document.createElement('div');
+    header.className = 'drill-header';
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = combo.name;
+    header.appendChild(nameSpan);
+    const progressSpan = document.createElement('span');
+    progressSpan.textContent = 'Rep ' + (this._currentRepeat + 1) + '/' + combo.repeatCount;
+    header.appendChild(progressSpan);
+    panel.appendChild(header);
+
+    const feedback = document.createElement('div');
+    feedback.className = 'combo-feedback ' + (success ? 'success' : 'fail');
+    feedback.textContent = success ? 'GOOD' : 'MISS';
+    panel.appendChild(feedback);
+  }
+
+  _showPauseUI() {
+    const panel = this._drillPanel;
+    panel.textContent = '';
+    panel.classList.remove('drill-panel-idle');
+
+    const prompt = document.createElement('div');
+    prompt.className = 'drill-prompt';
+    const label = document.createElement('div');
+    label.className = 'drill-prompt-instruction';
+    label.textContent = 'Paused — Press ESC to resume';
+    prompt.appendChild(label);
+    panel.appendChild(prompt);
+  }
+
+  _showResultUI() {
+    const panel = this._drillPanel;
+    panel.textContent = '';
+    panel.classList.remove('drill-panel-idle');
+
+    const combo = this._selectedCombo;
+
+    const title = document.createElement('div');
+    title.className = 'drill-result-title';
+    title.textContent = combo.name + ' Complete';
+    panel.appendChild(title);
+
+    // Stats
+    const successCount = this._stepResults.filter(r => r).length;
+    const totalRepeats = this._stepResults.length;
+    const successRate = totalRepeats > 0 ? Math.round((successCount / totalRepeats) * 100) : 0;
+
+    const stats = document.createElement('div');
+    stats.className = 'combo-result-stats';
+
+    const rateStat = this._createStat(successRate + '%', 'Success Rate');
+    const successStat = this._createStat(successCount + '/' + totalRepeats, 'Repeats');
+    stats.appendChild(rateStat);
+    stats.appendChild(successStat);
+    panel.appendChild(stats);
+
+    // Unlock notification
+    if (this._newUnlock) {
+      const unlockMsg = document.createElement('div');
+      unlockMsg.className = 'combo-unlock-msg';
+      unlockMsg.textContent = this._newUnlock.name + ' Unlocked!';
+      panel.appendChild(unlockMsg);
+    }
+
+    // Buttons
+    const btnGroup = document.createElement('div');
+    btnGroup.className = 'drill-btn-group';
+
+    const retryBtn = document.createElement('button');
+    retryBtn.className = 'drill-btn';
+    retryBtn.textContent = 'Retry';
+    retryBtn.addEventListener('click', () => this.start());
+    btnGroup.appendChild(retryBtn);
+
+    const backBtn = document.createElement('button');
+    backBtn.className = 'drill-btn';
+    backBtn.textContent = 'Back';
+    backBtn.addEventListener('click', () => {
+      this.dispose();
+      this._showIdleUI();
+    });
+    btnGroup.appendChild(backBtn);
+
+    panel.appendChild(btnGroup);
+  }
+
+  _createStat(value, label) {
+    const div = document.createElement('div');
+    div.className = 'combo-result-stat';
+    const valEl = document.createElement('div');
+    valEl.className = 'combo-result-stat-value';
+    valEl.textContent = value;
+    const lblEl = document.createElement('div');
+    lblEl.className = 'combo-result-stat-label';
+    lblEl.textContent = label;
+    div.appendChild(valEl);
+    div.appendChild(lblEl);
+    return div;
+  }
+}
+
+ComboDrillMode.UNLOCK_THRESHOLD = 0.8;
+ComboDrillMode.COUNTDOWN_INTERVAL_MS = 600;
+ComboDrillMode.STEP_DELAY_MS = 200;
+ComboDrillMode.STEP_FEEDBACK_MS = 500;
+ComboDrillMode.DEMO_SPEED_FACTOR = 0.6;
+ComboDrillMode.UNLOCK_ORDER = ['jiggle_right', 'strafe_peek_right', 'forward_peek_right', 'alternating_peek'];
+ComboDrillMode.KEY_NAMES = {
+  KeyQ: 'Q', KeyE: 'E', KeyW: 'W', KeyA: 'A', KeyS: 'S', KeyD: 'D'
+};
+
+// ============================================================
 // PlaceholderMode — Stub for unimplemented modes
 // ============================================================
 class PlaceholderMode extends ModeLifecycle {
@@ -2783,7 +3583,7 @@ class PlaceholderMode extends ModeLifecycle {
   // --- Register Modes ---
   const freeMode = new FreePracticeMode(renderer, input, clock, storage);
   const reactionMode = new ReactionDrillMode(input, clock, storage, appData);
-  const comboMode = new PlaceholderMode('combo', 'Combo Drill');
+  const comboMode = new ComboDrillMode(input, clock, storage, appData);
   const rhythmMode = new PlaceholderMode('rhythm', 'Rhythm Drill');
 
   modeManager.register('free', freeMode);
@@ -3254,16 +4054,91 @@ class PlaceholderMode extends ModeLifecycle {
     return summary('ReactionDrill Tests');
   }
 
+  async function runComboDrillTests() {
+    const { assert, summary } = createTestContext();
+
+    // --- COMBOS data structure ---
+    assert('COMBOS has 4 techniques', COMBOS.length === 4);
+    assert('jiggle_right is first', COMBOS[0].id === 'jiggle_right');
+    assert('strafe_peek_right is second', COMBOS[1].id === 'strafe_peek_right');
+    assert('forward_peek_right is third', COMBOS[2].id === 'forward_peek_right');
+    assert('alternating_peek is fourth', COMBOS[3].id === 'alternating_peek');
+
+    // --- Step structure ---
+    for (const combo of COMBOS) {
+      assert(combo.id + ' has steps', combo.steps.length > 0);
+      assert(combo.id + ' has repeatCount', combo.repeatCount > 0);
+      for (const step of combo.steps) {
+        assert(combo.id + ' step has valid action', step.action === 'press' || step.action === 'release');
+        assert(combo.id + ' step has keys', step.keys.length > 0);
+        assert(combo.id + ' step has maxDuration', step.maxDuration > 0);
+        assert(combo.id + ' step has simultaneousWindow defined', typeof step.simultaneousWindow === 'number');
+      }
+    }
+
+    // --- Unlock logic ---
+    const testStorage = new Storage();
+    const testData = testStorage.load();
+    testData.comboDrill = { techniques: {}, unlocked: ['jiggle_right'] };
+
+    const drillMode = new ComboDrillMode(input, clock, testStorage, testData);
+    drillMode.enter();
+
+    assert('jiggle_right unlocked by default', drillMode._unlockedCombos.has('jiggle_right'));
+    assert('strafe_peek_right locked by default', !drillMode._unlockedCombos.has('strafe_peek_right'));
+    assert('forward_peek_right locked by default', !drillMode._unlockedCombos.has('forward_peek_right'));
+    assert('alternating_peek locked by default', !drillMode._unlockedCombos.has('alternating_peek'));
+
+    // Simulate jiggle_right success >= 80%
+    testData.comboDrill.techniques['jiggle_right'] = { successRate: 0.85, attempts: 3 };
+    drillMode._loadProgress();
+    assert('strafe_peek_right unlocked after jiggle 85%', drillMode._unlockedCombos.has('strafe_peek_right'));
+    assert('forward_peek_right still locked', !drillMode._unlockedCombos.has('forward_peek_right'));
+
+    // Simulate strafe_peek_right success >= 80%
+    testData.comboDrill.techniques['strafe_peek_right'] = { successRate: 0.80, attempts: 5 };
+    drillMode._loadProgress();
+    assert('forward_peek_right unlocked after strafe 80%', drillMode._unlockedCombos.has('forward_peek_right'));
+    assert('alternating_peek still locked', !drillMode._unlockedCombos.has('alternating_peek'));
+
+    // Below threshold — should not unlock
+    testData.comboDrill.techniques['forward_peek_right'] = { successRate: 0.75, attempts: 4 };
+    drillMode._loadProgress();
+    assert('alternating_peek locked at 75%', !drillMode._unlockedCombos.has('alternating_peek'));
+
+    // At threshold
+    testData.comboDrill.techniques['forward_peek_right'] = { successRate: 0.80, attempts: 5 };
+    drillMode._loadProgress();
+    assert('alternating_peek unlocked at 80%', drillMode._unlockedCombos.has('alternating_peek'));
+
+    // --- State transitions ---
+    drillMode._selectedCombo = COMBOS[0];
+    assert('state is idle after enter', drillMode.state === 'idle');
+
+    // --- Resource cleanup ---
+    drillMode.dispose();
+    const counts = drillMode._getResourceCounts();
+    assert('all timers cleared after dispose', counts.timers === 0);
+    assert('all rafs cleared after dispose', counts.rafs === 0);
+    assert('all listeners cleared after dispose', counts.listeners === 0);
+
+    // Restore original mode
+    await modeManager.switchTo('free');
+
+    return summary('ComboDrill Tests');
+  }
+
   async function runTests() {
     console.log('=== EFT Trainer Self-Tests ===');
     const audioResults = await runAudioEngineTests();
     const modeResults = await runModeLifecycleTests();
     const fpResults = runFreePracticeTests();
     const reactionResults = await runReactionDrillTests();
-    const totalPassed = audioResults.passed + modeResults.passed + fpResults.passed + reactionResults.passed;
-    const totalTests = audioResults.total + modeResults.total + fpResults.total + reactionResults.total;
+    const comboResults = await runComboDrillTests();
+    const totalPassed = audioResults.passed + modeResults.passed + fpResults.passed + reactionResults.passed + comboResults.passed;
+    const totalTests = audioResults.total + modeResults.total + fpResults.total + reactionResults.total + comboResults.total;
     console.log('=== Total: ' + totalPassed + '/' + totalTests + ' passed ===');
-    return { audioResults, modeResults, fpResults, reactionResults, totalPassed, totalTests };
+    return { audioResults, modeResults, fpResults, reactionResults, comboResults, totalPassed, totalTests };
   }
 
   // --- Expose minimal public API ---

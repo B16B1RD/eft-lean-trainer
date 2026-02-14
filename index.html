@@ -1798,7 +1798,6 @@ class FreePracticeMode extends ModeLifecycle {
     });
 
     // Skip button
-    const skipBtn = document.getElementById('warmup-skip');
     if (skipBtn) {
       this._onSkip = () => this._completeWarmup();
       this._addEventListener(skipBtn, 'click', this._onSkip);

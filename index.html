@@ -1064,6 +1064,7 @@ class AudioEngine {
   constructor() {
     this._audioCtx = null;
     this._lastError = null;
+    this._isListenerRegistered = false;
     this._onVisibilityChange = this._handleVisibilityChange.bind(this);
   }
 
@@ -1073,10 +1074,11 @@ class AudioEngine {
    */
   async init() {
     if (!this._audioCtx) {
-      this._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      // removeEventListener is a no-op if not registered; guards against double-registration after destroy()
-      document.removeEventListener('visibilitychange', this._onVisibilityChange);
-      document.addEventListener('visibilitychange', this._onVisibilityChange);
+      this._audioCtx = new AudioContext();
+      if (!this._isListenerRegistered) {
+        document.addEventListener('visibilitychange', this._onVisibilityChange);
+        this._isListenerRegistered = true;
+      }
     }
 
     if (this._audioCtx.state === 'suspended') {
@@ -1105,7 +1107,7 @@ class AudioEngine {
    * @param {number} time - AudioContext.currentTime value to play at
    */
   playBeat(time) {
-    if (!this._audioCtx || this._audioCtx.state !== 'running') return;
+    if (!this.isReady()) return;
 
     const ctx = this._audioCtx;
     const osc = ctx.createOscillator();
@@ -1201,7 +1203,10 @@ class AudioEngine {
    * Only call on app teardown, NOT on mode switch.
    */
   destroy() {
-    document.removeEventListener('visibilitychange', this._onVisibilityChange);
+    if (this._isListenerRegistered) {
+      document.removeEventListener('visibilitychange', this._onVisibilityChange);
+      this._isListenerRegistered = false;
+    }
     if (this._audioCtx) {
       this._audioCtx.close().catch(e => {
         console.warn('[AudioEngine] Failed to close AudioContext:', e);

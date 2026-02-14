@@ -465,6 +465,15 @@ html, body {
   letter-spacing: 4px;
 }
 
+.drill-prompt-key.active {
+  border-color: var(--accent-red);
+  color: var(--accent-red);
+}
+
+.drill-panel-idle {
+  gap: 8px;
+}
+
 #settings-bar {
   padding: 8px 12px;
   background: var(--panel-bg);
@@ -1755,12 +1764,13 @@ class ReactionDrillMode extends ModeLifecycle {
     this._waitingForInput = false;
     this._showingFeedback = false;
 
-    // KRO tracking (per session, persisted partially)
-    this._kroAttempts = {}; // 'KeyA+KeyQ' -> { total: N, failed: N }
+    // KRO tracking
+    this._kroAttempts = {};
 
-    // Simultaneous key tracking for multi-key prompts
-    this._pendingKeys = null;     // Set of keys still needed
-    this._firstKeyTime = 0;       // Timestamp of first key in combo
+    // Simultaneous key tracking
+    this._pendingKeys = null;
+    this._firstKeyTime = 0;
+    this._comboTimeout = null;
   }
 
   enter() {
@@ -1796,7 +1806,6 @@ class ReactionDrillMode extends ModeLifecycle {
     if (this._state !== 'running' && this._state !== 'paused') return;
     super.stop();
     this._waitingForInput = false;
-    this._saveProgress();
     this._showResultUI();
   }
 
@@ -1804,6 +1813,7 @@ class ReactionDrillMode extends ModeLifecycle {
     this._waitingForInput = false;
     this._showingFeedback = false;
     this._pendingKeys = null;
+    this._comboTimeout = null;
     super.dispose();
   }
 
@@ -1813,10 +1823,10 @@ class ReactionDrillMode extends ModeLifecycle {
     const data = this._appData.reactionDrill || { levels: {}, best: {} };
     // Determine unlocked levels
     this._unlockedLevels = new Set([1]);
-    if (data.levels[1] && data.levels[1].avg && data.levels[1].avg <= 500) {
+    if (data.levels[1] && data.levels[1].avg && data.levels[1].avg <= ReactionDrillMode.UNLOCK_THRESHOLD_MS) {
       this._unlockedLevels.add(2);
     }
-    if (data.levels[2] && data.levels[2].avg && data.levels[2].avg <= 500) {
+    if (data.levels[2] && data.levels[2].avg && data.levels[2].avg <= ReactionDrillMode.UNLOCK_THRESHOLD_MS) {
       this._unlockedLevels.add(3);
     }
     // Restore KRO data
@@ -1854,8 +1864,8 @@ class ReactionDrillMode extends ModeLifecycle {
     this._storage.save(this._appData);
 
     // Update unlocked levels
-    if (lvl === 1 && avg <= 500) this._unlockedLevels.add(2);
-    if (lvl === 2 && avg <= 500) this._unlockedLevels.add(3);
+    if (lvl === 1 && avg <= ReactionDrillMode.UNLOCK_THRESHOLD_MS) this._unlockedLevels.add(2);
+    if (lvl === 2 && avg <= ReactionDrillMode.UNLOCK_THRESHOLD_MS) this._unlockedLevels.add(3);
   }
 
   // --- Question Generation ---
@@ -1863,10 +1873,30 @@ class ReactionDrillMode extends ModeLifecycle {
   _generateQuestions() {
     const combos = this._levelDefs[this._currentLevel].keys;
     this._questions = [];
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < ReactionDrillMode.QUESTIONS_PER_SET; i++) {
       const idx = Math.floor(Math.random() * combos.length);
       this._questions.push([...combos[idx]]);
     }
+  }
+
+  // --- Helpers ---
+
+  _createDrillHeader(rightText) {
+    const header = document.createElement('div');
+    header.className = 'drill-header';
+    const lvlSpan = document.createElement('span');
+    lvlSpan.textContent = this._levelDefs[this._currentLevel].name;
+    header.appendChild(lvlSpan);
+    if (rightText) {
+      const rightSpan = document.createElement('span');
+      rightSpan.textContent = rightText;
+      header.appendChild(rightSpan);
+    }
+    return header;
+  }
+
+  _getComboKey(keys) {
+    return [...keys].sort().join('+');
   }
 
   // --- UI Rendering ---
@@ -1874,8 +1904,7 @@ class ReactionDrillMode extends ModeLifecycle {
   _showIdleUI() {
     const panel = this._drillPanel;
     panel.textContent = '';
-    panel.style.justifyContent = '';
-    panel.style.gap = '8px';
+    panel.classList.add('drill-panel-idle');
 
     // Level tabs
     const header = document.createElement('div');
@@ -1888,7 +1917,10 @@ class ReactionDrillMode extends ModeLifecycle {
       tab.className = 'drill-level-tab';
       tab.textContent = this._levelDefs[lv].name;
       const isUnlocked = this._unlockedLevels.has(lv);
-      if (!isUnlocked) tab.classList.add('locked');
+      if (!isUnlocked) {
+        tab.classList.add('locked');
+        tab.disabled = true;
+      }
       if (lv === this._currentLevel) tab.classList.add('active');
       if (isUnlocked) {
         tab.addEventListener('click', () => {
@@ -1918,6 +1950,7 @@ class ReactionDrillMode extends ModeLifecycle {
     // Prompt area
     const prompt = document.createElement('div');
     prompt.className = 'drill-prompt';
+    prompt.setAttribute('aria-live', 'polite');
 
     const instruction = document.createElement('div');
     instruction.className = 'drill-prompt-instruction';
@@ -1939,6 +1972,7 @@ class ReactionDrillMode extends ModeLifecycle {
   _showCountdown() {
     const panel = this._drillPanel;
     panel.textContent = '';
+    panel.classList.remove('drill-panel-idle');
 
     const countdown = document.createElement('div');
     countdown.className = 'drill-countdown';
@@ -1959,12 +1993,12 @@ class ReactionDrillMode extends ModeLifecycle {
       count--;
       if (count > 0) {
         countdown.textContent = count;
-        this._addTimeout(tick, 600);
+        this._addTimeout(tick, ReactionDrillMode.COUNTDOWN_INTERVAL_MS);
       } else {
         this._showNextPrompt();
       }
     };
-    this._addTimeout(tick, 600);
+    this._addTimeout(tick, ReactionDrillMode.COUNTDOWN_INTERVAL_MS);
   }
 
   _showNextPrompt() {
@@ -1975,23 +2009,17 @@ class ReactionDrillMode extends ModeLifecycle {
 
     const panel = this._drillPanel;
     panel.textContent = '';
+    panel.classList.remove('drill-panel-idle');
 
     const currentKeys = this._questions[this._questionIndex];
 
     // Header with progress
-    const header = document.createElement('div');
-    header.className = 'drill-header';
-    const lvlSpan = document.createElement('span');
-    lvlSpan.textContent = this._levelDefs[this._currentLevel].name;
-    header.appendChild(lvlSpan);
-    const progressSpan = document.createElement('span');
-    progressSpan.textContent = (this._questionIndex + 1) + ' / ' + this._questions.length;
-    header.appendChild(progressSpan);
-    panel.appendChild(header);
+    panel.appendChild(this._createDrillHeader((this._questionIndex + 1) + ' / ' + this._questions.length));
 
     // Key prompt
     const prompt = document.createElement('div');
     prompt.className = 'drill-prompt';
+    prompt.setAttribute('aria-live', 'polite');
 
     const keysDiv = document.createElement('div');
     keysDiv.className = 'drill-prompt-keys';
@@ -2021,7 +2049,7 @@ class ReactionDrillMode extends ModeLifecycle {
     this._pendingKeys = null;
     this._firstKeyTime = 0;
 
-    const delay = 300 + Math.random() * 700; // 300-1000ms random delay
+    const delay = ReactionDrillMode.PROMPT_DELAY_MIN_MS + Math.random() * ReactionDrillMode.PROMPT_DELAY_RANGE_MS;
     this._addTimeout(() => {
       if (this._state !== 'running') return;
       this._promptTime = this._clock.now();
@@ -2034,7 +2062,7 @@ class ReactionDrillMode extends ModeLifecycle {
 
       // Visual cue: highlight prompt keys
       const keyEls = panel.querySelectorAll('.drill-prompt-key');
-      keyEls.forEach(el => { el.style.borderColor = 'var(--accent-red)'; el.style.color = 'var(--accent-red)'; });
+      keyEls.forEach(el => el.classList.add('active'));
       if (instruction) instruction.textContent = currentKeys.length === 1 ? 'NOW!' : 'NOW! Press all!';
     }, delay);
   }
@@ -2080,11 +2108,9 @@ class ReactionDrillMode extends ModeLifecycle {
     }
 
     // Check timeout: if first key was pressed but 80ms passed, it's a fail
-    this._addTimeout(() => {
+    this._comboTimeout = this._addTimeout(() => {
       if (this._pendingKeys && this._pendingKeys.size > 0 && this._waitingForInput) {
-        // Some keys not detected — possible KRO issue
-        const missingKeys = [...this._pendingKeys];
-        this._recordMiss(currentKeys, missingKeys.length > 0);
+        this._recordMiss(currentKeys, true);
       }
     }, this._input.SIMULTANEOUS_WINDOW + 10);
   }
@@ -2092,11 +2118,15 @@ class ReactionDrillMode extends ModeLifecycle {
   _recordReaction(reactionMs, keys) {
     this._waitingForInput = false;
     this._showingFeedback = true;
+    if (this._comboTimeout != null) {
+      this._clearTimer(this._comboTimeout);
+      this._comboTimeout = null;
+    }
     this._reactionTimes.push(reactionMs);
 
     // Track successful attempt for KRO
     if (keys.length > 1) {
-      const comboKey = [...keys].sort().join('+');
+      const comboKey = this._getComboKey(keys);
       if (!this._kroAttempts[comboKey]) this._kroAttempts[comboKey] = { total: 0, failed: 0 };
       this._kroAttempts[comboKey].total++;
     }
@@ -2109,12 +2139,11 @@ class ReactionDrillMode extends ModeLifecycle {
     this._showingFeedback = true;
     this._pendingKeys = null;
 
-    // Record a penalty time (2000ms as miss)
-    this._reactionTimes.push(2000);
+    this._reactionTimes.push(ReactionDrillMode.MISS_PENALTY_MS);
 
     // Track for KRO
     if (keys.length > 1) {
-      const comboKey = [...keys].sort().join('+');
+      const comboKey = this._getComboKey(keys);
       if (!this._kroAttempts[comboKey]) this._kroAttempts[comboKey] = { total: 0, failed: 0 };
       this._kroAttempts[comboKey].total++;
       if (possibleKro) this._kroAttempts[comboKey].failed++;
@@ -2126,17 +2155,9 @@ class ReactionDrillMode extends ModeLifecycle {
   _showFeedback(reactionMs, success) {
     const panel = this._drillPanel;
     panel.textContent = '';
+    panel.classList.remove('drill-panel-idle');
 
-    // Header
-    const header = document.createElement('div');
-    header.className = 'drill-header';
-    const lvlSpan = document.createElement('span');
-    lvlSpan.textContent = this._levelDefs[this._currentLevel].name;
-    header.appendChild(lvlSpan);
-    const progressSpan = document.createElement('span');
-    progressSpan.textContent = (this._questionIndex + 1) + ' / ' + this._questions.length;
-    header.appendChild(progressSpan);
-    panel.appendChild(header);
+    panel.appendChild(this._createDrillHeader((this._questionIndex + 1) + ' / ' + this._questions.length));
 
     const prompt = document.createElement('div');
     prompt.className = 'drill-prompt';
@@ -2156,9 +2177,9 @@ class ReactionDrillMode extends ModeLifecycle {
       // Check KRO warning
       const currentKeys = this._questions[this._questionIndex];
       if (currentKeys.length > 1) {
-        const comboKey = [...currentKeys].sort().join('+');
+        const comboKey = this._getComboKey(currentKeys);
         const stats = this._kroAttempts[comboKey];
-        if (stats && stats.total >= 5 && (stats.failed / stats.total) >= 0.6) {
+        if (stats && stats.total >= ReactionDrillMode.KRO_MIN_ATTEMPTS && (stats.failed / stats.total) >= ReactionDrillMode.KRO_FAIL_THRESHOLD) {
           const warning = document.createElement('div');
           warning.className = 'drill-kro-warning';
           warning.textContent = 'KRO Warning: This combination may not be detectable due to keyboard limitations';
@@ -2176,12 +2197,13 @@ class ReactionDrillMode extends ModeLifecycle {
       if (this._state === 'running') {
         this._showNextPrompt();
       }
-    }, 800);
+    }, ReactionDrillMode.FEEDBACK_DURATION_MS);
   }
 
   _showPauseUI() {
     const panel = this._drillPanel;
     panel.textContent = '';
+    panel.classList.remove('drill-panel-idle');
 
     const prompt = document.createElement('div');
     prompt.className = 'drill-prompt';
@@ -2197,6 +2219,7 @@ class ReactionDrillMode extends ModeLifecycle {
   _showResultUI() {
     const panel = this._drillPanel;
     panel.textContent = '';
+    panel.classList.remove('drill-panel-idle');
 
     const result = document.createElement('div');
     result.className = 'drill-result';
@@ -2207,7 +2230,7 @@ class ReactionDrillMode extends ModeLifecycle {
     result.appendChild(title);
 
     // Stats
-    const validTimes = this._reactionTimes.filter(t => t < 2000);
+    const validTimes = this._reactionTimes.filter(t => t < ReactionDrillMode.MISS_PENALTY_MS);
     const missCount = this._reactionTimes.length - validTimes.length;
     const avg = validTimes.length > 0 ? Math.round(validTimes.reduce((a, b) => a + b, 0) / validTimes.length) : 0;
     const best = validTimes.length > 0 ? Math.round(Math.min(...validTimes)) : 0;
@@ -2284,7 +2307,7 @@ class ReactionDrillMode extends ModeLifecycle {
   _getKroWarnings() {
     const warnings = [];
     for (const [combo, stats] of Object.entries(this._kroAttempts)) {
-      if (stats.total >= 5 && (stats.failed / stats.total) >= 0.6) {
+      if (stats.total >= ReactionDrillMode.KRO_MIN_ATTEMPTS && (stats.failed / stats.total) >= ReactionDrillMode.KRO_FAIL_THRESHOLD) {
         const keys = combo.split('+').map(k => this._keyNames[k] || k);
         warnings.push(keys.join('+'));
       }
@@ -2292,6 +2315,16 @@ class ReactionDrillMode extends ModeLifecycle {
     return warnings;
   }
 }
+
+ReactionDrillMode.MISS_PENALTY_MS = 2000;
+ReactionDrillMode.COUNTDOWN_INTERVAL_MS = 600;
+ReactionDrillMode.FEEDBACK_DURATION_MS = 800;
+ReactionDrillMode.PROMPT_DELAY_MIN_MS = 300;
+ReactionDrillMode.PROMPT_DELAY_RANGE_MS = 700;
+ReactionDrillMode.UNLOCK_THRESHOLD_MS = 500;
+ReactionDrillMode.QUESTIONS_PER_SET = 10;
+ReactionDrillMode.KRO_MIN_ATTEMPTS = 5;
+ReactionDrillMode.KRO_FAIL_THRESHOLD = 0.6;
 
 // ============================================================
 // PlaceholderMode — Stub for unimplemented modes

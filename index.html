@@ -527,6 +527,7 @@ class InputManager {
   }
 
   areSimultaneous(codes) {
+    if (codes.length === 0) return false;
     const times = [];
     for (let i = 0; i < codes.length; i++) {
       const t = this._keyPressTimestamps.get(codes[i]);
@@ -577,12 +578,19 @@ class Storage {
       if (!raw) return this._deepClone(this.DEFAULTS);
 
       const data = JSON.parse(raw);
+      if (!data || typeof data !== 'object' ||
+          typeof data.schemaVersion !== 'number' ||
+          !Number.isInteger(data.schemaVersion) ||
+          data.schemaVersion < 1) {
+        throw new Error('Invalid schema: schemaVersion must be a positive integer');
+      }
       return this.migrate(data);
     } catch (e) {
       console.warn('[Storage] Data corrupted, backing up and reinitializing:', e);
       this._backupCorrupted();
       const defaults = this._deepClone(this.DEFAULTS);
       this.save(defaults);
+      this._notifyUser('データが破損していたため初期化しました。設定はリセットされています。');
       return defaults;
     }
   }
@@ -595,7 +603,19 @@ class Storage {
     try {
       localStorage.setItem(this.KEY, JSON.stringify(data));
     } catch (e) {
-      console.error('[Storage] Failed to save:', e);
+      if (e.name === 'QuotaExceededError') {
+        console.warn('[Storage] Quota exceeded, pruning backups and retrying...');
+        this._pruneAllBackups();
+        try {
+          localStorage.setItem(this.KEY, JSON.stringify(data));
+          return;
+        } catch (retryErr) {
+          console.error('[Storage] Save failed after cleanup:', retryErr);
+          this._notifyUser('保存容量が不足しています。ブラウザの設定を確認してください。');
+        }
+      } else {
+        console.error('[Storage] Failed to save:', e);
+      }
     }
   }
 
@@ -653,6 +673,23 @@ class Storage {
     }
   }
 
+  _pruneAllBackups() {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(this.BACKUP_PREFIX)) {
+        localStorage.removeItem(key);
+      }
+    }
+  }
+
+  _notifyUser(message) {
+    const banner = document.getElementById('warning-banner');
+    if (banner) {
+      banner.textContent = message;
+      banner.classList.add('visible');
+    }
+  }
+
   _deepClone(obj) {
     return JSON.parse(JSON.stringify(obj));
   }
@@ -662,11 +699,21 @@ class Storage {
 // App Initialization
 // ============================================================
 (function() {
-  const clock = new GameClock();
-  const input = new InputManager();
-  const storage = new Storage();
-
-  const appData = storage.load();
+  let clock, input, storage, appData;
+  try {
+    clock = new GameClock();
+    input = new InputManager();
+    storage = new Storage();
+    appData = storage.load();
+  } catch (initError) {
+    console.error('[App] Initialization failed:', initError);
+    const banner = document.getElementById('warning-banner');
+    if (banner) {
+      banner.textContent = '初期化に失敗しました。ページを再読み込みしてください。';
+      banner.classList.add('visible');
+    }
+    return;
+  }
 
   // Schema version warning
   if (appData._readOnly) {
@@ -755,23 +802,27 @@ class Storage {
   }
   rafId = requestAnimationFrame(updateClock);
 
-  // --- Canvas Resize ---
+  // --- Canvas Resize (debounced) ---
   const canvas = document.getElementById('game-canvas');
+  let resizeTimer = null;
   function resizeCanvas() {
     const container = document.getElementById('canvas-container');
     canvas.width = container.clientWidth;
     canvas.height = container.clientHeight;
   }
-  window.addEventListener('resize', resizeCanvas);
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(resizeCanvas, 150);
+  });
   resizeCanvas();
 
   // --- Expose for other modules and testing ---
-  window.EFTTrainer = {
+  window.EFTTrainer = Object.freeze({
     clock,
     input,
     storage,
     appData
-  };
+  });
 })();
 </script>
 

@@ -261,6 +261,219 @@ html, body {
   text-transform: uppercase;
 }
 
+/* === Reaction Drill === */
+.drill-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.drill-level-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.drill-level-tab {
+  padding: 3px 8px;
+  font-size: 10px;
+  font-family: inherit;
+  background: var(--key-bg);
+  color: var(--text-muted);
+  border: 1px solid var(--key-border);
+  border-radius: 3px;
+  cursor: pointer;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.drill-level-tab.active {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-color: var(--accent-turquoise);
+}
+
+.drill-level-tab.locked {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.drill-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  width: 100%;
+  gap: 8px;
+}
+
+.drill-prompt-keys {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+}
+
+.drill-prompt-key {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  font-size: 22px;
+  font-weight: bold;
+  font-family: inherit;
+  background: var(--key-bg);
+  border: 2px solid var(--accent-turquoise);
+  border-radius: 6px;
+  color: var(--accent-turquoise);
+  letter-spacing: 1px;
+}
+
+.drill-prompt-plus {
+  font-size: 20px;
+  color: var(--text-muted);
+}
+
+.drill-prompt-instruction {
+  font-size: 11px;
+  color: var(--text-secondary);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.drill-reaction-time {
+  font-size: 28px;
+  font-weight: bold;
+  color: var(--accent-turquoise);
+  letter-spacing: 2px;
+}
+
+.drill-reaction-time.slow {
+  color: var(--accent-red);
+}
+
+.drill-progress {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+}
+
+.drill-result {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.drill-result-title {
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--text-primary);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.drill-result-stats {
+  display: flex;
+  gap: 24px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.drill-result-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.drill-result-stat-value {
+  font-size: 20px;
+  font-weight: bold;
+  color: var(--accent-turquoise);
+}
+
+.drill-result-stat-label {
+  font-size: 9px;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.drill-btn {
+  padding: 6px 16px;
+  font-size: 11px;
+  font-family: inherit;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--accent-turquoise);
+  border-radius: 3px;
+  cursor: pointer;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  transition: all 0.15s;
+}
+
+.drill-btn:hover {
+  background: var(--accent-turquoise);
+  color: var(--bg-primary);
+}
+
+.drill-btn-group {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.drill-level-up {
+  font-size: 12px;
+  color: var(--accent-turquoise);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  animation: drill-pulse 1s ease-in-out 3;
+}
+
+@keyframes drill-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.drill-kro-warning {
+  padding: 6px 10px;
+  background: rgba(233, 69, 96, 0.15);
+  border: 1px solid rgba(233, 69, 96, 0.3);
+  border-radius: 4px;
+  color: var(--accent-red);
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  width: 100%;
+  text-align: center;
+}
+
+.drill-countdown {
+  font-size: 48px;
+  font-weight: bold;
+  color: var(--text-primary);
+  letter-spacing: 4px;
+}
+
+.drill-prompt-key.active {
+  border-color: var(--accent-red);
+  color: var(--accent-red);
+}
+
+.drill-panel-idle {
+  gap: 8px;
+}
+
 #settings-bar {
   padding: 8px 12px;
   background: var(--panel-bg);
@@ -1511,6 +1724,609 @@ class FreePracticeMode extends ModeLifecycle {
 }
 
 // ============================================================
+// ReactionDrillMode — Key reaction drill with progressive levels
+// ============================================================
+class ReactionDrillMode extends ModeLifecycle {
+  constructor(inputManager, clock, storage, appData) {
+    super('reaction');
+    this._input = inputManager;
+    this._clock = clock;
+    this._storage = storage;
+    this._appData = appData;
+    this._drillPanel = null;
+
+    // Level definitions
+    this._levelDefs = {
+      1: { name: 'Lv1', label: 'Single Key', keys: [
+        ['KeyQ'], ['KeyE'], ['KeyW'], ['KeyA'], ['KeyS'], ['KeyD']
+      ]},
+      2: { name: 'Lv2', label: '2-Key Combo', keys: [
+        ['KeyD', 'KeyE'], ['KeyA', 'KeyQ'], ['KeyW', 'KeyE'],
+        ['KeyS', 'KeyQ'], ['KeyW', 'KeyD'], ['KeyA', 'KeyE']
+      ]},
+      3: { name: 'Lv3', label: '3-Key Combo', keys: [
+        ['KeyW', 'KeyD', 'KeyE'], ['KeyW', 'KeyA', 'KeyQ'],
+        ['KeyS', 'KeyD', 'KeyE'], ['KeyS', 'KeyA', 'KeyQ']
+      ]}
+    };
+
+    // Key display names
+    this._keyNames = {
+      KeyQ: 'Q', KeyE: 'E', KeyW: 'W', KeyA: 'A', KeyS: 'S', KeyD: 'D'
+    };
+
+    // Drill state
+    this._currentLevel = 1;
+    this._questions = [];
+    this._questionIndex = 0;
+    this._promptTime = 0;
+    this._reactionTimes = [];
+    this._waitingForInput = false;
+    this._showingFeedback = false;
+
+    // KRO tracking
+    this._kroAttempts = {};
+
+    // Simultaneous key tracking
+    this._pendingKeys = null;
+    this._firstKeyTime = 0;
+    this._comboTimeout = null;
+  }
+
+  enter() {
+    super.enter();
+    this._drillPanel = document.getElementById('drill-panel');
+    this._loadProgress();
+    this._showIdleUI();
+  }
+
+  start() {
+    if (this._state !== 'idle' && this._state !== 'result') return;
+    super.start();
+    this._generateQuestions();
+    this._questionIndex = 0;
+    this._reactionTimes = [];
+    this._showCountdown();
+  }
+
+  pause() {
+    if (this._state !== 'running') return;
+    super.pause();
+    this._waitingForInput = false;
+    this._showPauseUI();
+  }
+
+  resume() {
+    if (this._state !== 'paused') return;
+    super.resume();
+    this._showNextPrompt();
+  }
+
+  stop() {
+    if (this._state !== 'running' && this._state !== 'paused') return;
+    super.stop();
+    this._waitingForInput = false;
+    this._showResultUI();
+  }
+
+  dispose() {
+    this._waitingForInput = false;
+    this._showingFeedback = false;
+    this._pendingKeys = null;
+    this._comboTimeout = null;
+    super.dispose();
+  }
+
+  // --- Progress Persistence ---
+
+  _loadProgress() {
+    const data = this._appData.reactionDrill || { levels: {}, best: {} };
+    // Determine unlocked levels
+    this._unlockedLevels = new Set([1]);
+    if (data.levels[1] && data.levels[1].avg && data.levels[1].avg <= ReactionDrillMode.UNLOCK_THRESHOLD_MS) {
+      this._unlockedLevels.add(2);
+    }
+    if (data.levels[2] && data.levels[2].avg && data.levels[2].avg <= ReactionDrillMode.UNLOCK_THRESHOLD_MS) {
+      this._unlockedLevels.add(3);
+    }
+    // Restore KRO data
+    if (this._appData.kro && this._appData.kro.drillFailCounts) {
+      for (const [combo, count] of Object.entries(this._appData.kro.drillFailCounts)) {
+        this._kroAttempts[combo] = this._kroAttempts[combo] || { total: 0, failed: 0 };
+        this._kroAttempts[combo].failed = count;
+      }
+    }
+  }
+
+  _saveProgress() {
+    if (this._reactionTimes.length === 0) return;
+    const avg = Math.round(this._reactionTimes.reduce((a, b) => a + b, 0) / this._reactionTimes.length);
+    const best = Math.round(Math.min(...this._reactionTimes));
+    const lvl = this._currentLevel;
+
+    const data = this._appData.reactionDrill || { levels: {}, best: {} };
+    if (!data.levels[lvl] || avg < data.levels[lvl].avg) {
+      data.levels[lvl] = { avg, best, timestamp: Date.now() };
+    }
+    if (!data.best[lvl] || best < data.best[lvl]) {
+      data.best[lvl] = best;
+    }
+    this._appData.reactionDrill = data;
+
+    // Save KRO fail counts
+    const failCounts = {};
+    for (const [combo, stats] of Object.entries(this._kroAttempts)) {
+      if (stats.failed > 0) failCounts[combo] = stats.failed;
+    }
+    this._appData.kro = this._appData.kro || { diagnosis: null, failedCombos: {}, drillFailCounts: {} };
+    this._appData.kro.drillFailCounts = failCounts;
+
+    this._storage.save(this._appData);
+
+    // Update unlocked levels
+    if (lvl === 1 && avg <= ReactionDrillMode.UNLOCK_THRESHOLD_MS) this._unlockedLevels.add(2);
+    if (lvl === 2 && avg <= ReactionDrillMode.UNLOCK_THRESHOLD_MS) this._unlockedLevels.add(3);
+  }
+
+  // --- Question Generation ---
+
+  _generateQuestions() {
+    const combos = this._levelDefs[this._currentLevel].keys;
+    this._questions = [];
+    for (let i = 0; i < ReactionDrillMode.QUESTIONS_PER_SET; i++) {
+      const idx = Math.floor(Math.random() * combos.length);
+      this._questions.push([...combos[idx]]);
+    }
+  }
+
+  // --- Helpers ---
+
+  _createDrillHeader(rightText) {
+    const header = document.createElement('div');
+    header.className = 'drill-header';
+    const lvlSpan = document.createElement('span');
+    lvlSpan.textContent = this._levelDefs[this._currentLevel].name;
+    header.appendChild(lvlSpan);
+    if (rightText) {
+      const rightSpan = document.createElement('span');
+      rightSpan.textContent = rightText;
+      header.appendChild(rightSpan);
+    }
+    return header;
+  }
+
+  _getComboKey(keys) {
+    return [...keys].sort().join('+');
+  }
+
+  // --- UI Rendering ---
+
+  _showIdleUI() {
+    const panel = this._drillPanel;
+    panel.textContent = '';
+    panel.classList.add('drill-panel-idle');
+
+    // Level tabs
+    const header = document.createElement('div');
+    header.className = 'drill-header';
+
+    const tabs = document.createElement('div');
+    tabs.className = 'drill-level-tabs';
+    for (let lv = 1; lv <= 3; lv++) {
+      const tab = document.createElement('button');
+      tab.className = 'drill-level-tab';
+      tab.textContent = this._levelDefs[lv].name;
+      const isUnlocked = this._unlockedLevels.has(lv);
+      if (!isUnlocked) {
+        tab.classList.add('locked');
+        tab.disabled = true;
+      }
+      if (lv === this._currentLevel) tab.classList.add('active');
+      if (isUnlocked) {
+        tab.addEventListener('click', () => {
+          this._currentLevel = lv;
+          this._showIdleUI();
+        });
+      }
+      tabs.appendChild(tab);
+    }
+    header.appendChild(tabs);
+
+    const levelLabel = document.createElement('span');
+    levelLabel.textContent = this._levelDefs[this._currentLevel].label;
+    header.appendChild(levelLabel);
+    panel.appendChild(header);
+
+    // Best score display
+    const data = this._appData.reactionDrill || { levels: {}, best: {} };
+    const lvlData = data.levels[this._currentLevel];
+    if (lvlData) {
+      const bestDiv = document.createElement('div');
+      bestDiv.className = 'drill-progress';
+      bestDiv.textContent = 'Best Avg: ' + lvlData.avg + 'ms | Best: ' + (data.best[this._currentLevel] || lvlData.best) + 'ms';
+      panel.appendChild(bestDiv);
+    }
+
+    // Prompt area
+    const prompt = document.createElement('div');
+    prompt.className = 'drill-prompt';
+    prompt.setAttribute('aria-live', 'polite');
+
+    const instruction = document.createElement('div');
+    instruction.className = 'drill-prompt-instruction';
+    if (this._currentLevel === 1) {
+      instruction.textContent = 'Press the shown key as fast as you can';
+    } else {
+      instruction.textContent = 'Press all keys simultaneously (within 80ms)';
+    }
+    prompt.appendChild(instruction);
+
+    const startBtn = document.createElement('button');
+    startBtn.className = 'drill-btn';
+    startBtn.textContent = 'Start Drill';
+    startBtn.addEventListener('click', () => this.start());
+    prompt.appendChild(startBtn);
+    panel.appendChild(prompt);
+  }
+
+  _showCountdown() {
+    const panel = this._drillPanel;
+    panel.textContent = '';
+    panel.classList.remove('drill-panel-idle');
+
+    const countdown = document.createElement('div');
+    countdown.className = 'drill-countdown';
+
+    // Bind keydown handler once for the entire drill session
+    this._onKeyDown = (data) => this._handleDrillKey(data);
+    this._input.on('keydown', this._onKeyDown);
+    this._addDisposable(() => {
+      this._input.off('keydown', this._onKeyDown);
+      this._onKeyDown = null;
+    });
+
+    let count = 3;
+    countdown.textContent = count;
+    panel.appendChild(countdown);
+
+    const tick = () => {
+      count--;
+      if (count > 0) {
+        countdown.textContent = count;
+        this._addTimeout(tick, ReactionDrillMode.COUNTDOWN_INTERVAL_MS);
+      } else {
+        this._showNextPrompt();
+      }
+    };
+    this._addTimeout(tick, ReactionDrillMode.COUNTDOWN_INTERVAL_MS);
+  }
+
+  _showNextPrompt() {
+    if (this._questionIndex >= this._questions.length) {
+      this.stop();
+      return;
+    }
+
+    const panel = this._drillPanel;
+    panel.textContent = '';
+    panel.classList.remove('drill-panel-idle');
+
+    const currentKeys = this._questions[this._questionIndex];
+
+    // Header with progress
+    panel.appendChild(this._createDrillHeader((this._questionIndex + 1) + ' / ' + this._questions.length));
+
+    // Key prompt
+    const prompt = document.createElement('div');
+    prompt.className = 'drill-prompt';
+    prompt.setAttribute('aria-live', 'polite');
+
+    const keysDiv = document.createElement('div');
+    keysDiv.className = 'drill-prompt-keys';
+    for (let i = 0; i < currentKeys.length; i++) {
+      if (i > 0) {
+        const plus = document.createElement('span');
+        plus.className = 'drill-prompt-plus';
+        plus.textContent = '+';
+        keysDiv.appendChild(plus);
+      }
+      const keyEl = document.createElement('div');
+      keyEl.className = 'drill-prompt-key';
+      keyEl.textContent = this._keyNames[currentKeys[i]] || currentKeys[i];
+      keysDiv.appendChild(keyEl);
+    }
+    prompt.appendChild(keysDiv);
+
+    const instruction = document.createElement('div');
+    instruction.className = 'drill-prompt-instruction';
+    instruction.textContent = currentKeys.length === 1 ? 'Press now!' : 'Press all at once!';
+    prompt.appendChild(instruction);
+
+    panel.appendChild(prompt);
+
+    // Activate input detection with random delay
+    this._waitingForInput = false;
+    this._pendingKeys = null;
+    this._firstKeyTime = 0;
+
+    const delay = ReactionDrillMode.PROMPT_DELAY_MIN_MS + Math.random() * ReactionDrillMode.PROMPT_DELAY_RANGE_MS;
+    this._addTimeout(() => {
+      if (this._state !== 'running') return;
+      this._promptTime = this._clock.now();
+      this._waitingForInput = true;
+
+      if (currentKeys.length > 1) {
+        this._pendingKeys = new Set(currentKeys);
+        this._firstKeyTime = 0;
+      }
+
+      // Visual cue: highlight prompt keys
+      const keyEls = panel.querySelectorAll('.drill-prompt-key');
+      keyEls.forEach(el => el.classList.add('active'));
+      if (instruction) instruction.textContent = currentKeys.length === 1 ? 'NOW!' : 'NOW! Press all!';
+    }, delay);
+  }
+
+  _handleDrillKey(data) {
+    if (!this._waitingForInput || this._state !== 'running') return;
+
+    const currentKeys = this._questions[this._questionIndex];
+    const pressedCode = data.code;
+
+    // Single key level
+    if (currentKeys.length === 1) {
+      if (pressedCode === currentKeys[0]) {
+        const reaction = this._clock.now() - this._promptTime;
+        this._recordReaction(reaction, currentKeys);
+      }
+      return;
+    }
+
+    // Multi-key level: check if pressed key is one of the expected keys
+    if (!this._pendingKeys || !this._pendingKeys.has(pressedCode)) return;
+
+    const now = this._clock.now();
+    if (this._firstKeyTime === 0) {
+      this._firstKeyTime = now;
+    }
+
+    this._pendingKeys.delete(pressedCode);
+
+    // Check if all keys pressed
+    if (this._pendingKeys.size === 0) {
+      // Verify simultaneity (within 80ms window)
+      const elapsed = now - this._firstKeyTime;
+      if (elapsed <= this._input.SIMULTANEOUS_WINDOW) {
+        // Last key time - prompt time = reaction
+        const reaction = now - this._promptTime;
+        this._recordReaction(reaction, currentKeys);
+      } else {
+        // Not simultaneous — treat as miss, track for KRO
+        this._recordMiss(currentKeys, false);
+      }
+      return;
+    }
+
+    // Check timeout: if first key was pressed but 80ms passed, it's a fail
+    this._comboTimeout = this._addTimeout(() => {
+      if (this._pendingKeys && this._pendingKeys.size > 0 && this._waitingForInput) {
+        this._recordMiss(currentKeys, true);
+      }
+    }, this._input.SIMULTANEOUS_WINDOW + 10);
+  }
+
+  _recordReaction(reactionMs, keys) {
+    this._waitingForInput = false;
+    this._showingFeedback = true;
+    if (this._comboTimeout != null) {
+      this._clearTimer(this._comboTimeout);
+      this._comboTimeout = null;
+    }
+    this._reactionTimes.push(reactionMs);
+
+    // Track successful attempt for KRO
+    if (keys.length > 1) {
+      const comboKey = this._getComboKey(keys);
+      if (!this._kroAttempts[comboKey]) this._kroAttempts[comboKey] = { total: 0, failed: 0 };
+      this._kroAttempts[comboKey].total++;
+    }
+
+    this._showFeedback(reactionMs, true);
+  }
+
+  _recordMiss(keys, possibleKro) {
+    this._waitingForInput = false;
+    this._showingFeedback = true;
+    this._pendingKeys = null;
+
+    this._reactionTimes.push(ReactionDrillMode.MISS_PENALTY_MS);
+
+    // Track for KRO
+    if (keys.length > 1) {
+      const comboKey = this._getComboKey(keys);
+      if (!this._kroAttempts[comboKey]) this._kroAttempts[comboKey] = { total: 0, failed: 0 };
+      this._kroAttempts[comboKey].total++;
+      if (possibleKro) this._kroAttempts[comboKey].failed++;
+    }
+
+    this._showFeedback(null, false);
+  }
+
+  _showFeedback(reactionMs, success) {
+    const panel = this._drillPanel;
+    panel.textContent = '';
+    panel.classList.remove('drill-panel-idle');
+
+    panel.appendChild(this._createDrillHeader((this._questionIndex + 1) + ' / ' + this._questions.length));
+
+    const prompt = document.createElement('div');
+    prompt.className = 'drill-prompt';
+
+    if (success) {
+      const timeDiv = document.createElement('div');
+      timeDiv.className = 'drill-reaction-time';
+      if (reactionMs > 500) timeDiv.classList.add('slow');
+      timeDiv.textContent = Math.round(reactionMs) + 'ms';
+      prompt.appendChild(timeDiv);
+    } else {
+      const missDiv = document.createElement('div');
+      missDiv.className = 'drill-reaction-time slow';
+      missDiv.textContent = 'MISS';
+      prompt.appendChild(missDiv);
+
+      // Check KRO warning
+      const currentKeys = this._questions[this._questionIndex];
+      if (currentKeys.length > 1) {
+        const comboKey = this._getComboKey(currentKeys);
+        const stats = this._kroAttempts[comboKey];
+        if (stats && stats.total >= ReactionDrillMode.KRO_MIN_ATTEMPTS && (stats.failed / stats.total) >= ReactionDrillMode.KRO_FAIL_THRESHOLD) {
+          const warning = document.createElement('div');
+          warning.className = 'drill-kro-warning';
+          warning.textContent = 'KRO Warning: This combination may not be detectable due to keyboard limitations';
+          prompt.appendChild(warning);
+        }
+      }
+    }
+
+    panel.appendChild(prompt);
+
+    // Advance to next question
+    this._questionIndex++;
+    this._addTimeout(() => {
+      this._showingFeedback = false;
+      if (this._state === 'running') {
+        this._showNextPrompt();
+      }
+    }, ReactionDrillMode.FEEDBACK_DURATION_MS);
+  }
+
+  _showPauseUI() {
+    const panel = this._drillPanel;
+    panel.textContent = '';
+    panel.classList.remove('drill-panel-idle');
+
+    const prompt = document.createElement('div');
+    prompt.className = 'drill-prompt';
+
+    const label = document.createElement('div');
+    label.className = 'drill-prompt-instruction';
+    label.textContent = 'Paused — Press ESC to resume';
+    prompt.appendChild(label);
+
+    panel.appendChild(prompt);
+  }
+
+  _showResultUI() {
+    const panel = this._drillPanel;
+    panel.textContent = '';
+    panel.classList.remove('drill-panel-idle');
+
+    const result = document.createElement('div');
+    result.className = 'drill-result';
+
+    const title = document.createElement('div');
+    title.className = 'drill-result-title';
+    title.textContent = 'Drill Complete';
+    result.appendChild(title);
+
+    // Stats
+    const validTimes = this._reactionTimes.filter(t => t < ReactionDrillMode.MISS_PENALTY_MS);
+    const missCount = this._reactionTimes.length - validTimes.length;
+    const avg = validTimes.length > 0 ? Math.round(validTimes.reduce((a, b) => a + b, 0) / validTimes.length) : 0;
+    const best = validTimes.length > 0 ? Math.round(Math.min(...validTimes)) : 0;
+
+    const stats = document.createElement('div');
+    stats.className = 'drill-result-stats';
+
+    const avgStat = this._createStat(avg + 'ms', 'Avg Time');
+    const bestStat = this._createStat(best + 'ms', 'Best');
+    const missStat = this._createStat(missCount + '', 'Misses');
+    stats.appendChild(avgStat);
+    stats.appendChild(bestStat);
+    stats.appendChild(missStat);
+    result.appendChild(stats);
+
+    // Level up notification
+    const prevUnlocked = new Set(this._unlockedLevels);
+    this._saveProgress();
+    if (this._currentLevel < 3 && !prevUnlocked.has(this._currentLevel + 1) && this._unlockedLevels.has(this._currentLevel + 1)) {
+      const levelUp = document.createElement('div');
+      levelUp.className = 'drill-level-up';
+      levelUp.textContent = 'Level ' + (this._currentLevel + 1) + ' Unlocked!';
+      result.appendChild(levelUp);
+    }
+
+    // KRO warnings summary
+    const kroWarnings = this._getKroWarnings();
+    if (kroWarnings.length > 0) {
+      const warning = document.createElement('div');
+      warning.className = 'drill-kro-warning';
+      warning.textContent = 'KRO Warning: ' + kroWarnings.join(', ') + ' — these combinations may not be detectable due to keyboard limitations';
+      result.appendChild(warning);
+    }
+
+    // Buttons
+    const btnGroup = document.createElement('div');
+    btnGroup.className = 'drill-btn-group';
+
+    const retryBtn = document.createElement('button');
+    retryBtn.className = 'drill-btn';
+    retryBtn.textContent = 'Retry';
+    retryBtn.addEventListener('click', () => this.start());
+    btnGroup.appendChild(retryBtn);
+
+    if (this._currentLevel < 3 && this._unlockedLevels.has(this._currentLevel + 1)) {
+      const nextBtn = document.createElement('button');
+      nextBtn.className = 'drill-btn';
+      nextBtn.textContent = 'Next Level';
+      nextBtn.addEventListener('click', () => {
+        this._currentLevel++;
+        this.start();
+      });
+      btnGroup.appendChild(nextBtn);
+    }
+
+    result.appendChild(btnGroup);
+    panel.appendChild(result);
+  }
+
+  _createStat(value, label) {
+    const div = document.createElement('div');
+    div.className = 'drill-result-stat';
+    const valEl = document.createElement('div');
+    valEl.className = 'drill-result-stat-value';
+    valEl.textContent = value;
+    const lblEl = document.createElement('div');
+    lblEl.className = 'drill-result-stat-label';
+    lblEl.textContent = label;
+    div.appendChild(valEl);
+    div.appendChild(lblEl);
+    return div;
+  }
+
+  _getKroWarnings() {
+    const warnings = [];
+    for (const [combo, stats] of Object.entries(this._kroAttempts)) {
+      if (stats.total >= ReactionDrillMode.KRO_MIN_ATTEMPTS && (stats.failed / stats.total) >= ReactionDrillMode.KRO_FAIL_THRESHOLD) {
+        const keys = combo.split('+').map(k => this._keyNames[k] || k);
+        warnings.push(keys.join('+'));
+      }
+    }
+    return warnings;
+  }
+}
+
+ReactionDrillMode.MISS_PENALTY_MS = 2000;
+ReactionDrillMode.COUNTDOWN_INTERVAL_MS = 600;
+ReactionDrillMode.FEEDBACK_DURATION_MS = 800;
+ReactionDrillMode.PROMPT_DELAY_MIN_MS = 300;
+ReactionDrillMode.PROMPT_DELAY_RANGE_MS = 700;
+ReactionDrillMode.UNLOCK_THRESHOLD_MS = 500;
+ReactionDrillMode.QUESTIONS_PER_SET = 10;
+ReactionDrillMode.KRO_MIN_ATTEMPTS = 5;
+ReactionDrillMode.KRO_FAIL_THRESHOLD = 0.6;
+
+// ============================================================
 // PlaceholderMode — Stub for unimplemented modes
 // ============================================================
 class PlaceholderMode extends ModeLifecycle {
@@ -1631,7 +2447,7 @@ class PlaceholderMode extends ModeLifecycle {
 
   // --- Register Modes ---
   const freeMode = new FreePracticeMode(renderer, input, clock);
-  const reactionMode = new PlaceholderMode('reaction', 'Key Reaction Drill');
+  const reactionMode = new ReactionDrillMode(input, clock, storage, appData);
   const comboMode = new PlaceholderMode('combo', 'Combo Drill');
   const rhythmMode = new PlaceholderMode('rhythm', 'Rhythm Drill');
 
@@ -1925,14 +2741,102 @@ class PlaceholderMode extends ModeLifecycle {
     return summary('ModeLifecycle Tests');
   }
 
+  async function runReactionDrillTests() {
+    const { assert, summary } = createTestContext();
+
+    // --- Level progression logic ---
+    const testStorage = new Storage();
+    const testData = testStorage.load();
+    // Clear previous reaction data for clean test
+    testData.reactionDrill = { levels: {}, best: {} };
+    testData.kro = { diagnosis: null, failedCombos: {}, drillFailCounts: {} };
+
+    const drillMode = new ReactionDrillMode(input, clock, testStorage, testData);
+
+    // Test initial state
+    assert('drill initial state is idle', drillMode.state === 'idle');
+
+    // Test level unlock logic: level 1 only by default
+    drillMode.enter();
+    assert('level 1 unlocked by default', drillMode._unlockedLevels.has(1));
+    assert('level 2 locked by default', !drillMode._unlockedLevels.has(2));
+    assert('level 3 locked by default', !drillMode._unlockedLevels.has(3));
+
+    // Simulate Lv1 completion with fast times (avg < 500ms)
+    testData.reactionDrill.levels[1] = { avg: 350, best: 200, timestamp: Date.now() };
+    drillMode._loadProgress();
+    assert('level 2 unlocked after Lv1 avg < 500ms', drillMode._unlockedLevels.has(2));
+    assert('level 3 still locked', !drillMode._unlockedLevels.has(3));
+
+    // Simulate Lv2 completion with fast times
+    testData.reactionDrill.levels[2] = { avg: 480, best: 300, timestamp: Date.now() };
+    drillMode._loadProgress();
+    assert('level 3 unlocked after Lv2 avg < 500ms', drillMode._unlockedLevels.has(3));
+
+    // Simulate slow Lv1 — should not unlock Lv2
+    testData.reactionDrill = { levels: {}, best: {} };
+    testData.reactionDrill.levels[1] = { avg: 600, best: 450, timestamp: Date.now() };
+    drillMode._loadProgress();
+    assert('level 2 stays locked with avg > 500ms', !drillMode._unlockedLevels.has(2));
+
+    // --- Question generation ---
+    drillMode._currentLevel = 1;
+    drillMode._generateQuestions();
+    assert('generates 10 questions', drillMode._questions.length === 10);
+    assert('Lv1 questions are single key', drillMode._questions.every(q => q.length === 1));
+
+    drillMode._currentLevel = 2;
+    drillMode._generateQuestions();
+    assert('Lv2 questions are 2-key combos', drillMode._questions.every(q => q.length === 2));
+
+    drillMode._currentLevel = 3;
+    drillMode._generateQuestions();
+    assert('Lv3 questions are 3-key combos', drillMode._questions.every(q => q.length === 3));
+
+    // --- KRO warning threshold ---
+    drillMode._kroAttempts = {};
+    drillMode._kroAttempts['KeyA+KeyQ'] = { total: 5, failed: 3 };
+    const warnings = drillMode._getKroWarnings();
+    assert('KRO warning triggers at 60% fail rate with 5+ attempts', warnings.length === 1);
+    assert('KRO warning combo is A+Q', warnings[0] === 'A+Q');
+
+    // Below threshold
+    drillMode._kroAttempts['KeyD+KeyE'] = { total: 5, failed: 2 };
+    const warnings2 = drillMode._getKroWarnings();
+    assert('no KRO warning at 40% fail rate', warnings2.length === 1); // only A+Q
+
+    // Not enough attempts
+    drillMode._kroAttempts['KeyW+KeyE'] = { total: 4, failed: 4 };
+    const warnings3 = drillMode._getKroWarnings();
+    assert('no KRO warning with < 5 attempts', warnings3.length === 1); // still only A+Q
+
+    // --- State transitions ---
+    drillMode._currentLevel = 1;
+    drillMode.enter();
+    assert('state is idle after enter', drillMode.state === 'idle');
+
+    // --- Resource cleanup ---
+    drillMode.dispose();
+    const counts = drillMode._getResourceCounts();
+    assert('all timers cleared after dispose', counts.timers === 0);
+    assert('all rafs cleared after dispose', counts.rafs === 0);
+    assert('all listeners cleared after dispose', counts.listeners === 0);
+
+    // Restore original mode
+    await modeManager.switchTo('free');
+
+    return summary('ReactionDrill Tests');
+  }
+
   async function runTests() {
     console.log('=== EFT Trainer Self-Tests ===');
     const audioResults = await runAudioEngineTests();
     const modeResults = await runModeLifecycleTests();
-    const totalPassed = audioResults.passed + modeResults.passed;
-    const totalTests = audioResults.total + modeResults.total;
+    const reactionResults = await runReactionDrillTests();
+    const totalPassed = audioResults.passed + modeResults.passed + reactionResults.passed;
+    const totalTests = audioResults.total + modeResults.total + reactionResults.total;
     console.log('=== Total: ' + totalPassed + '/' + totalTests + ' passed ===');
-    return { audioResults, modeResults, totalPassed, totalTests };
+    return { audioResults, modeResults, reactionResults, totalPassed, totalTests };
   }
 
   // --- Expose minimal public API ---

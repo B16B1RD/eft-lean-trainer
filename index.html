@@ -631,6 +631,7 @@ html, body {
 .combo-technique-card.locked {
   opacity: 0.4; cursor: not-allowed;
 }
+.drill-btn-secondary { margin-top: 4px; opacity: 0.7; }
 .combo-technique-name {
   font-size: 12px; font-weight: bold; color: var(--text-primary);
   letter-spacing: 1px;
@@ -2817,10 +2818,7 @@ class ComboDrillMode extends ModeLifecycle {
     this._storage = storage;
     this._appData = appData;
     this._drillPanel = null;
-
-    this._keyNames = {
-      KeyQ: 'Q', KeyE: 'E', KeyW: 'W', KeyA: 'A', KeyS: 'S', KeyD: 'D'
-    };
+    this._keyNames = ComboDrillMode.KEY_NAMES;
 
     // Drill state
     this._selectedCombo = null;
@@ -2897,12 +2895,13 @@ class ComboDrillMode extends ModeLifecycle {
     const data = this._appData.comboDrill || { techniques: {}, unlocked: ['jiggle_right'] };
     this._unlockedCombos = new Set(data.unlocked || ['jiggle_right']);
     this._unlockedCombos.add('jiggle_right');
+    this._checkUnlocks(data);
+  }
 
-    // Check progressive unlock
-    const UNLOCK_ORDER = ['jiggle_right', 'strafe_peek_right', 'forward_peek_right', 'alternating_peek'];
-    for (let i = 0; i < UNLOCK_ORDER.length - 1; i++) {
-      const current = UNLOCK_ORDER[i];
-      const next = UNLOCK_ORDER[i + 1];
+  _checkUnlocks(data) {
+    for (let i = 0; i < ComboDrillMode.UNLOCK_ORDER.length - 1; i++) {
+      const current = ComboDrillMode.UNLOCK_ORDER[i];
+      const next = ComboDrillMode.UNLOCK_ORDER[i + 1];
       if (data.techniques[current] && data.techniques[current].successRate >= ComboDrillMode.UNLOCK_THRESHOLD) {
         this._unlockedCombos.add(next);
       }
@@ -2930,14 +2929,7 @@ class ComboDrillMode extends ModeLifecycle {
 
     // Update unlocked set
     const prevUnlocked = new Set(this._unlockedCombos);
-    const UNLOCK_ORDER = ['jiggle_right', 'strafe_peek_right', 'forward_peek_right', 'alternating_peek'];
-    for (let i = 0; i < UNLOCK_ORDER.length - 1; i++) {
-      const current = UNLOCK_ORDER[i];
-      const next = UNLOCK_ORDER[i + 1];
-      if (data.techniques[current] && data.techniques[current].successRate >= ComboDrillMode.UNLOCK_THRESHOLD) {
-        this._unlockedCombos.add(next);
-      }
-    }
+    this._checkUnlocks(data);
     data.unlocked = [...this._unlockedCombos];
     this._appData.comboDrill = data;
     this._storage.save(this._appData);
@@ -2962,18 +2954,25 @@ class ComboDrillMode extends ModeLifecycle {
     const countdown = document.createElement('div');
     countdown.className = 'drill-countdown';
 
-    // Bind key handlers for the drill session
+    // Remove any existing key handlers before binding new ones (prevents leak on Retry)
+    if (this._onKeyDown) {
+      this._input.off('keydown', this._onKeyDown);
+      this._input.off('keyup', this._onKeyUp);
+    }
     this._onKeyDown = (data) => this._handleStepKey(data, 'press');
     this._onKeyUp = (data) => this._handleStepKey(data, 'release');
     this._input.on('keydown', this._onKeyDown);
     this._input.on('keyup', this._onKeyUp);
+    // Capture references by value so dispose removes the correct handlers
+    const boundKeyDown = this._onKeyDown;
+    const boundKeyUp = this._onKeyUp;
     this._addDisposable(() => {
-      this._input.off('keydown', this._onKeyDown);
-      this._input.off('keyup', this._onKeyUp);
-      this._onKeyDown = null;
-      this._onKeyUp = null;
+      this._input.off('keydown', boundKeyDown);
+      this._input.off('keyup', boundKeyUp);
     });
 
+    countdown.setAttribute('aria-live', 'assertive');
+    countdown.setAttribute('role', 'timer');
     let count = 3;
     countdown.textContent = count;
     panel.appendChild(countdown);
@@ -3022,11 +3021,7 @@ class ComboDrillMode extends ModeLifecycle {
       this._waitingForInput = true;
       this._firstKeyTime = 0;
 
-      if (step.keys.length > 1 && step.simultaneousWindow > 0) {
-        this._pendingKeys = new Set(step.keys);
-      } else {
-        this._pendingKeys = new Set(step.keys);
-      }
+      this._pendingKeys = new Set(step.keys);
 
       // maxDuration timeout
       this._addTimeout(() => {
@@ -3078,7 +3073,6 @@ class ComboDrillMode extends ModeLifecycle {
 
     const combo = this._selectedCombo;
     const isLastStep = this._currentStepIndex >= combo.steps.length - 1;
-    const isLastRepeat = this._currentRepeat >= combo.repeatCount - 1;
 
     if (isLastStep) {
       // Record repeat result — success only if no steps failed in this repeat
@@ -3105,7 +3099,6 @@ class ComboDrillMode extends ModeLifecycle {
     panel.textContent = '';
     panel.classList.add('drill-panel-idle');
 
-    // Title
     const header = document.createElement('div');
     header.className = 'drill-header';
     const titleSpan = document.createElement('span');
@@ -3113,21 +3106,36 @@ class ComboDrillMode extends ModeLifecycle {
     header.appendChild(titleSpan);
     panel.appendChild(header);
 
-    // Technique list
+    panel.appendChild(this._renderTechniqueList());
+
+    if (this._selectedCombo && this._unlockedCombos.has(this._selectedCombo.id)) {
+      this._renderComboDetails(panel, this._selectedCombo);
+    }
+  }
+
+  _renderTechniqueList() {
     const list = document.createElement('div');
     list.className = 'combo-technique-list';
+    list.setAttribute('role', 'listbox');
+    list.setAttribute('aria-label', 'Combo techniques');
 
     for (const combo of COMBOS) {
       const card = document.createElement('div');
       card.className = 'combo-technique-card';
       const isUnlocked = this._unlockedCombos.has(combo.id);
 
+      card.setAttribute('role', 'option');
+      card.setAttribute('tabindex', isUnlocked ? '0' : '-1');
+
       if (!isUnlocked) {
         card.classList.add('locked');
+        card.setAttribute('aria-disabled', 'true');
+        card.title = 'Complete the previous technique with 80%+ success rate to unlock';
       }
 
       if (this._selectedCombo && this._selectedCombo.id === combo.id) {
         card.classList.add('selected');
+        card.setAttribute('aria-selected', 'true');
       }
 
       const name = document.createElement('span');
@@ -3145,9 +3153,16 @@ class ComboDrillMode extends ModeLifecycle {
           card.appendChild(rate);
         }
 
-        card.addEventListener('click', () => {
+        const selectHandler = () => {
           this._selectedCombo = combo;
           this._showIdleUI();
+        };
+        card.addEventListener('click', selectHandler);
+        card.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            selectHandler();
+          }
         });
       } else {
         const lock = document.createElement('span');
@@ -3158,44 +3173,36 @@ class ComboDrillMode extends ModeLifecycle {
 
       list.appendChild(card);
     }
-    panel.appendChild(list);
+    return list;
+  }
 
-    // Selected combo details
-    if (this._selectedCombo && this._unlockedCombos.has(this._selectedCombo.id)) {
-      const combo = this._selectedCombo;
+  _renderComboDetails(panel, combo) {
+    const desc = document.createElement('div');
+    desc.className = 'combo-description';
+    desc.textContent = combo.description;
+    panel.appendChild(desc);
 
-      const desc = document.createElement('div');
-      desc.className = 'combo-description';
-      desc.textContent = combo.description;
-      panel.appendChild(desc);
+    const demoArea = document.createElement('div');
+    demoArea.className = 'combo-demo-area';
+    this._renderDemoSteps(demoArea, combo);
+    panel.appendChild(demoArea);
 
-      // Demo area showing the step sequence
-      const demoArea = document.createElement('div');
-      demoArea.className = 'combo-demo-area';
-      this._renderDemoSteps(demoArea, combo);
-      panel.appendChild(demoArea);
+    const repeatInfo = document.createElement('div');
+    repeatInfo.className = 'combo-repeat-indicator';
+    repeatInfo.textContent = '× ' + combo.repeatCount + ' repeats';
+    panel.appendChild(repeatInfo);
 
-      const repeatInfo = document.createElement('div');
-      repeatInfo.className = 'combo-repeat-indicator';
-      repeatInfo.textContent = '× ' + combo.repeatCount + ' repeats';
-      panel.appendChild(repeatInfo);
+    const startBtn = document.createElement('button');
+    startBtn.className = 'drill-btn';
+    startBtn.textContent = 'Start Drill';
+    startBtn.addEventListener('click', () => this.start());
+    panel.appendChild(startBtn);
 
-      // Start button
-      const startBtn = document.createElement('button');
-      startBtn.className = 'drill-btn';
-      startBtn.textContent = 'Start Drill';
-      startBtn.addEventListener('click', () => this.start());
-      panel.appendChild(startBtn);
-
-      // Demo button
-      const demoBtn = document.createElement('button');
-      demoBtn.className = 'drill-btn';
-      demoBtn.style.marginTop = '4px';
-      demoBtn.style.opacity = '0.7';
-      demoBtn.textContent = 'Watch Demo';
-      demoBtn.addEventListener('click', () => this._playDemo());
-      panel.appendChild(demoBtn);
-    }
+    const demoBtn = document.createElement('button');
+    demoBtn.className = 'drill-btn drill-btn-secondary';
+    demoBtn.textContent = 'Watch Demo';
+    demoBtn.addEventListener('click', () => this._playDemo());
+    panel.appendChild(demoBtn);
   }
 
   _renderDemoSteps(container, combo) {
@@ -3254,7 +3261,7 @@ class ComboDrillMode extends ModeLifecycle {
       stepIndex++;
 
       const step = combo.steps[stepIndex - 1];
-      const duration = step.maxDuration * 0.6; // Faster for demo
+      const duration = step.maxDuration * ComboDrillMode.DEMO_SPEED_FACTOR;
       this._addTimeout(animateStep, Math.max(duration, 150));
     };
 
@@ -3421,7 +3428,7 @@ class ComboDrillMode extends ModeLifecycle {
     backBtn.className = 'drill-btn';
     backBtn.textContent = 'Back';
     backBtn.addEventListener('click', () => {
-      this._state = 'idle';
+      this.dispose();
       this._showIdleUI();
     });
     btnGroup.appendChild(backBtn);
@@ -3448,6 +3455,11 @@ ComboDrillMode.UNLOCK_THRESHOLD = 0.8;
 ComboDrillMode.COUNTDOWN_INTERVAL_MS = 600;
 ComboDrillMode.STEP_DELAY_MS = 200;
 ComboDrillMode.STEP_FEEDBACK_MS = 500;
+ComboDrillMode.DEMO_SPEED_FACTOR = 0.6;
+ComboDrillMode.UNLOCK_ORDER = ['jiggle_right', 'strafe_peek_right', 'forward_peek_right', 'alternating_peek'];
+ComboDrillMode.KEY_NAMES = {
+  KeyQ: 'Q', KeyE: 'E', KeyW: 'W', KeyA: 'A', KeyS: 'S', KeyD: 'D'
+};
 
 // ============================================================
 // PlaceholderMode — Stub for unimplemented modes

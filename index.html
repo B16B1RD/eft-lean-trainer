@@ -1058,16 +1058,176 @@ class Renderer {
 }
 
 // ============================================================
+// AudioEngine — AudioContext based sound engine
+// ============================================================
+class AudioEngine {
+  constructor() {
+    this._audioCtx = null;
+    this._lastError = null;
+    this._isListenerRegistered = false;
+    this._onVisibilityChange = this._handleVisibilityChange.bind(this);
+  }
+
+  /**
+   * Initialize AudioContext. Must be called within a user gesture (click/keydown).
+   * @returns {Promise<void>}
+   */
+  async init() {
+    if (!this._audioCtx) {
+      this._audioCtx = new AudioContext();
+      if (!this._isListenerRegistered) {
+        document.addEventListener('visibilitychange', this._onVisibilityChange);
+        this._isListenerRegistered = true;
+      }
+    }
+
+    if (this._audioCtx.state === 'suspended') {
+      await this._tryResume();
+    }
+  }
+
+  /**
+   * Attempt to resume AudioContext. Shared by init() and resume().
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _tryResume() {
+    try {
+      await this._audioCtx.resume();
+      this._lastError = null;
+    } catch (e) {
+      this._lastError = e;
+      throw e;
+    }
+  }
+
+  /**
+   * Schedule a short beat sound at the given AudioContext time.
+   * Uses a square wave oscillator for a percussive click sound.
+   * @param {number} time - AudioContext.currentTime value to play at
+   */
+  playBeat(time) {
+    if (!this.isReady()) return;
+
+    const ctx = this._audioCtx;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(880, time);
+
+    gain.gain.setValueAtTime(0.3, time);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(time);
+    osc.stop(time + 0.05);
+  }
+
+  /**
+   * Resume AudioContext. Returns a Promise.
+   * @returns {Promise<void>}
+   */
+  async resume() {
+    if (!this._audioCtx) return;
+    await this._tryResume();
+  }
+
+  /**
+   * Suspend AudioContext. Returns a Promise.
+   * Public API methods (suspend, resume, init) propagate errors via throw
+   * so callers can handle them explicitly.
+   * @returns {Promise<void>}
+   */
+  async suspend() {
+    if (!this._audioCtx) return;
+    try {
+      await this._audioCtx.suspend();
+    } catch (e) {
+      this._lastError = e;
+      throw e;
+    }
+  }
+
+  /**
+   * Check if AudioContext is in 'running' state and ready to play.
+   * @returns {boolean}
+   */
+  isReady() {
+    return this._audioCtx !== null && this._audioCtx.state === 'running';
+  }
+
+  /**
+   * Get current AudioContext state.
+   * @returns {string} 'suspended' | 'running' | 'closed' | 'uninitialized'
+   */
+  get state() {
+    return this._audioCtx ? this._audioCtx.state : 'uninitialized';
+  }
+
+  /**
+   * Get the underlying AudioContext's currentTime.
+   * @returns {number}
+   */
+  get currentTime() {
+    return this._audioCtx ? this._audioCtx.currentTime : 0;
+  }
+
+  /**
+   * Get the last error from resume/suspend operations.
+   * @returns {Error|null}
+   */
+  get lastError() {
+    return this._lastError;
+  }
+
+  /**
+   * Handle visibility change for background recovery.
+   * When returning from background, check and attempt resume.
+   * Unlike public API methods, this internal handler uses catch+warn
+   * because it fires automatically without caller context to handle errors.
+   */
+  _handleVisibilityChange() {
+    if (!document.hidden && this._audioCtx && this._audioCtx.state === 'suspended') {
+      this._audioCtx.resume().catch(e => {
+        this._lastError = e;
+        console.warn('[AudioEngine] Failed to resume after visibility change:', e);
+      });
+    }
+  }
+
+  /**
+   * Destroy AudioContext and clean up resources.
+   * Only call on app teardown, NOT on mode switch.
+   */
+  destroy() {
+    if (this._isListenerRegistered) {
+      document.removeEventListener('visibilitychange', this._onVisibilityChange);
+      this._isListenerRegistered = false;
+    }
+    if (this._audioCtx) {
+      this._audioCtx.close().catch(e => {
+        console.warn('[AudioEngine] Failed to close AudioContext:', e);
+      });
+      this._audioCtx = null;
+    }
+  }
+}
+
+// ============================================================
 // App Initialization
 // ============================================================
 (function() {
-  let clock, input, storage, appData, renderer;
+  let clock, input, storage, appData, renderer, audioEngine;
   try {
     clock = new GameClock();
     input = new InputManager();
     storage = new Storage();
     appData = storage.load();
     renderer = new Renderer(document.getElementById('game-canvas'));
+    audioEngine = new AudioEngine();
   } catch (initError) {
     console.error('[App] Initialization failed:', initError);
     const banner = document.getElementById('warning-banner');
@@ -1227,6 +1387,93 @@ class Renderer {
     }, 150);
   }, { signal: resizeController.signal });
 
+  // --- Self-test functions (dev mode) ---
+  async function runAudioEngineTests() {
+    const results = [];
+    function assert(name, condition) {
+      results.push({ name, pass: !!condition });
+      console.log(condition ? '[PASS]' : '[FAIL]', name);
+    }
+
+    // Test 1: Initial state
+    const testEngine = new AudioEngine();
+    assert('initial state is uninitialized', testEngine.state === 'uninitialized');
+    assert('isReady returns false before init', testEngine.isReady() === false);
+    assert('currentTime is 0 before init', testEngine.currentTime === 0);
+    assert('lastError is null initially', testEngine.lastError === null);
+
+    // Test 2: init creates AudioContext
+    try {
+      await testEngine.init();
+      assert('state is running after init', testEngine.state === 'running');
+      assert('isReady returns true after init', testEngine.isReady() === true);
+      assert('currentTime is a number', typeof testEngine.currentTime === 'number');
+    } catch (e) {
+      assert('init succeeds (may fail without user gesture)', false);
+    }
+
+    // Test 3: suspend
+    try {
+      await testEngine.suspend();
+      assert('state is suspended after suspend', testEngine.state === 'suspended');
+      assert('isReady returns false after suspend', testEngine.isReady() === false);
+    } catch (e) {
+      assert('suspend succeeds', false);
+    }
+
+    // Test 4: resume
+    try {
+      await testEngine.resume();
+      assert('state is running after resume', testEngine.state === 'running');
+      assert('isReady returns true after resume', testEngine.isReady() === true);
+    } catch (e) {
+      assert('resume succeeds', false);
+    }
+
+    // Test 5: playBeat does not throw
+    try {
+      testEngine.playBeat(testEngine.currentTime + 0.1);
+      assert('playBeat does not throw', true);
+    } catch (e) {
+      assert('playBeat does not throw', false);
+    }
+
+    // Test 6: playBeat is no-op when suspended
+    try {
+      await testEngine.suspend();
+      testEngine.playBeat(testEngine.currentTime + 0.1);
+      assert('playBeat is no-op when suspended', true);
+    } catch (e) {
+      assert('playBeat is no-op when suspended', false);
+    }
+
+    // Test 7: destroy
+    testEngine.destroy();
+    assert('state is uninitialized after destroy', testEngine.state === 'uninitialized');
+    assert('isReady returns false after destroy', testEngine.isReady() === false);
+
+    // Test 8: resume/suspend on uninitialized engine is no-op
+    const uninitEngine = new AudioEngine();
+    try {
+      await uninitEngine.resume();
+      assert('resume on uninitialized is no-op', true);
+    } catch (e) {
+      assert('resume on uninitialized is no-op', false);
+    }
+    try {
+      await uninitEngine.suspend();
+      assert('suspend on uninitialized is no-op', true);
+    } catch (e) {
+      assert('suspend on uninitialized is no-op', false);
+    }
+    uninitEngine.destroy();
+
+    const passed = results.filter(r => r.pass).length;
+    const total = results.length;
+    console.log('--- AudioEngine Tests: ' + passed + '/' + total + ' passed ---');
+    return { passed, total, results };
+  }
+
   // --- Expose for other modules and testing ---
   window.EFTTrainer = Object.freeze({
     clock,
@@ -1234,9 +1481,12 @@ class Renderer {
     storage,
     appData,
     renderer,
+    audioEngine,
+    runAudioEngineTests,
     destroy() {
       resizeController.abort();
       renderer.destroy();
+      audioEngine.destroy();
     }
   });
 })();

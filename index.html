@@ -329,7 +329,7 @@ html, body {
   <div id="main">
     <!-- Canvas -->
     <div id="canvas-container">
-      <canvas id="game-canvas"></canvas>
+      <canvas id="game-canvas" role="img" aria-label="リーン練習シミュレーション"></canvas>
       <div id="canvas-overlay">AWAITING RENDERER</div>
     </div>
 
@@ -696,15 +696,378 @@ class Storage {
 }
 
 // ============================================================
+// Renderer — Canvas drawing engine with raycast visualization
+// ============================================================
+class Renderer {
+  constructor(canvas, config = {}) {
+    this._canvas = canvas;
+    this._ctx = canvas.getContext('2d');
+    this._displayWidth = 0;
+    this._displayHeight = 0;
+
+    this.EPSILON = 1e-10;
+
+    // Design-spec constants (configurable via config param for testing)
+    const defaults = {
+      GRID_SIZE: 40,
+      CHAR_RADIUS: 15,
+      ENEMY_RADIUS: 10,
+      FOV_HALF_ANGLE: Math.PI / 6, // 30°
+      FOV_RANGE: 250,
+      LEAN_OFFSET_X: 20,
+      LEAN_ROTATION: (5 * Math.PI) / 180, // 5°
+      EXPOSURE_SAMPLES: 16,
+    };
+    Object.assign(this, defaults, config);
+
+    // Colors matching military-dark theme
+    this.COLORS = {
+      grid: 'rgba(40, 65, 45, 0.3)',
+      charBody: '#3a7ecf',
+      charStroke: '#5a9eef',
+      fov: 'rgba(58, 138, 219, 0.12)',
+      fovStroke: 'rgba(58, 138, 219, 0.3)',
+      viewpoint: '#ffcc00',
+      obstacle: '#5a6a7a',
+      obstacleStroke: '#7a8a9a',
+      enemy: '#e94560',
+      enemyStroke: '#ff6580',
+      rayVisible: '#16c79a',
+      rayBlocked: '#e94560',
+      exposure: '#ffffff',
+    };
+  }
+
+  get width() { return this._displayWidth; }
+  get height() { return this._displayHeight; }
+
+  render(state) {
+    const ctx = this._ctx;
+    const w = this.width;
+    const h = this.height;
+    if (w === 0 || h === 0) return;
+
+    ctx.clearRect(0, 0, w, h);
+
+    const { obstacles, enemies, character: char, leanState } = this._sanitizeState(state, w, h);
+
+    // Calculate viewpoint based on lean
+    const vp = this._getViewpoint(char.x, char.y, leanState);
+    const frontAngle = this._getFrontAngle(leanState);
+
+    // Draw layers back-to-front
+    this._drawGrid(ctx, w, h);
+    this._drawFOV(ctx, vp, frontAngle);
+    this._drawObstacles(ctx, obstacles);
+
+    // Raycast visibility and draw rays
+    const exposures = this._processVisibility(ctx, vp, frontAngle, enemies, obstacles);
+
+    this._drawEnemies(ctx, enemies);
+    this._drawCharacter(ctx, char.x, char.y, leanState, vp);
+
+    // Draw exposure percentages on top
+    for (const { enemy, exposure } of exposures) {
+      this._drawExposure(ctx, enemy, exposure);
+    }
+  }
+
+  _sanitizeState(state, w, h) {
+    return {
+      obstacles: state.obstacles || [],
+      enemies: state.enemies || [],
+      character: state.character || { x: w / 2, y: h / 2 },
+      leanState: state.leanState || 'neutral',
+    };
+  }
+
+  _processVisibility(ctx, vp, frontAngle, enemies, obstacles) {
+    const exposures = [];
+    for (const enemy of enemies) {
+      const inFOV = this._isInFOV(vp.x, vp.y, enemy.x, enemy.y, frontAngle);
+      this._drawRay(ctx, vp.x, vp.y, enemy, obstacles, inFOV);
+      if (inFOV) {
+        const exposure = this._calculateExposure(vp.x, vp.y, enemy, obstacles);
+        exposures.push({ enemy, exposure });
+      }
+    }
+    return exposures;
+  }
+
+  resize() {
+    const container = this._canvas.parentElement;
+    if (!container) return;
+    const dpr = window.devicePixelRatio || 1;
+    this._displayWidth = container.clientWidth;
+    this._displayHeight = container.clientHeight;
+    this._canvas.width = this._displayWidth * dpr;
+    this._canvas.height = this._displayHeight * dpr;
+    this._canvas.style.width = this._displayWidth + 'px';
+    this._canvas.style.height = this._displayHeight + 'px';
+    this._ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  destroy() {
+    this._ctx = null;
+  }
+
+  // --- Viewpoint calculation ---
+
+  _getViewpoint(cx, cy, leanState) {
+    let offsetX = 0;
+    if (leanState === 'left') offsetX = -this.LEAN_OFFSET_X;
+    else if (leanState === 'right') offsetX = this.LEAN_OFFSET_X;
+    return { x: cx + offsetX, y: cy };
+  }
+
+  _getFrontAngle(leanState) {
+    // Front direction is -Y (up on canvas) = -PI/2 in atan2
+    let angle = -Math.PI / 2;
+    if (leanState === 'left') angle -= this.LEAN_ROTATION;
+    else if (leanState === 'right') angle += this.LEAN_ROTATION;
+    return angle;
+  }
+
+  // --- Drawing methods ---
+
+  _drawGrid(ctx, w, h) {
+    ctx.strokeStyle = this.COLORS.grid;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = 0; x <= w; x += this.GRID_SIZE) {
+      ctx.moveTo(x + 0.5, 0);
+      ctx.lineTo(x + 0.5, h);
+    }
+    for (let y = 0; y <= h; y += this.GRID_SIZE) {
+      ctx.moveTo(0, y + 0.5);
+      ctx.lineTo(w, y + 0.5);
+    }
+    ctx.stroke();
+  }
+
+  _drawFOV(ctx, viewpoint, frontAngle) {
+    const startAngle = frontAngle - this.FOV_HALF_ANGLE;
+    const endAngle = frontAngle + this.FOV_HALF_ANGLE;
+
+    ctx.beginPath();
+    ctx.moveTo(viewpoint.x, viewpoint.y);
+    ctx.arc(viewpoint.x, viewpoint.y, this.FOV_RANGE, startAngle, endAngle);
+    ctx.closePath();
+    ctx.fillStyle = this.COLORS.fov;
+    ctx.fill();
+    ctx.strokeStyle = this.COLORS.fovStroke;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  _drawObstacles(ctx, obstacles) {
+    for (const obs of obstacles) {
+      ctx.fillStyle = this.COLORS.obstacle;
+      ctx.strokeStyle = this.COLORS.obstacleStroke;
+      ctx.lineWidth = 1;
+      ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
+      ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
+    }
+  }
+
+  _drawCharacter(ctx, cx, cy, leanState, viewpoint) {
+    // Draw body circle
+    ctx.beginPath();
+    ctx.arc(cx, cy, this.CHAR_RADIUS, 0, Math.PI * 2);
+    ctx.fillStyle = this.COLORS.charBody;
+    ctx.fill();
+    ctx.strokeStyle = this.COLORS.charStroke;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Draw front direction indicator
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx, cy - this.CHAR_RADIUS - 6);
+    ctx.strokeStyle = this.COLORS.charStroke;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Draw lean tilt indicator
+    if (leanState !== 'neutral') {
+      const tiltX = leanState === 'left' ? -8 : 8;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - this.CHAR_RADIUS);
+      ctx.lineTo(cx + tiltX, cy - this.CHAR_RADIUS - 8);
+      ctx.strokeStyle = this.COLORS.viewpoint;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Draw viewpoint dot
+      ctx.beginPath();
+      ctx.arc(viewpoint.x, viewpoint.y, 3, 0, Math.PI * 2);
+      ctx.fillStyle = this.COLORS.viewpoint;
+      ctx.fill();
+    }
+  }
+
+  _drawEnemies(ctx, enemies) {
+    for (const enemy of enemies) {
+      const r = enemy.radius || this.ENEMY_RADIUS;
+      // Diamond shape
+      ctx.beginPath();
+      ctx.moveTo(enemy.x, enemy.y - r);
+      ctx.lineTo(enemy.x + r, enemy.y);
+      ctx.lineTo(enemy.x, enemy.y + r);
+      ctx.lineTo(enemy.x - r, enemy.y);
+      ctx.closePath();
+      ctx.fillStyle = this.COLORS.enemy;
+      ctx.fill();
+      ctx.strokeStyle = this.COLORS.enemyStroke;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+
+  _drawRay(ctx, vx, vy, enemy, obstacles, inFOV) {
+    if (!inFOV) return;
+
+    const dx = enemy.x - vx;
+    const dy = enemy.y - vy;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < this.EPSILON) return;
+
+    const ndx = dx / dist;
+    const ndy = dy / dist;
+
+    // Find closest obstacle intersection
+    let minT = dist;
+    let blocked = false;
+    for (const obs of obstacles) {
+      const t = this._rayAABBIntersect(vx, vy, ndx, ndy, obs);
+      if (t < minT) {
+        minT = t;
+        blocked = true;
+      }
+    }
+
+    const endX = vx + ndx * minT;
+    const endY = vy + ndy * minT;
+
+    ctx.save();
+    ctx.setLineDash([6, 4]);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = blocked ? this.COLORS.rayBlocked : this.COLORS.rayVisible;
+    ctx.beginPath();
+    ctx.moveTo(vx, vy);
+    ctx.lineTo(endX, endY);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  _drawExposure(ctx, enemy, exposure) {
+    const text = Math.round(exposure) + '%';
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+
+    const r = enemy.radius || this.ENEMY_RADIUS;
+    const tx = enemy.x;
+    const ty = enemy.y - r - 8;
+
+    // Background for readability
+    const metrics = ctx.measureText(text);
+    const pw = metrics.width + 8;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(tx - pw / 2, ty - 13, pw, 16);
+
+    ctx.fillStyle = exposure > 0 ? this.COLORS.rayVisible : this.COLORS.rayBlocked;
+    ctx.fillText(text, tx, ty);
+  }
+
+  // --- Raycast / geometry ---
+
+  _isInFOV(vx, vy, tx, ty, frontAngle) {
+    const dx = tx - vx;
+    const dy = ty - vy;
+    const angle = Math.atan2(dy, dx);
+    const diff = Math.atan2(Math.sin(angle - frontAngle), Math.cos(angle - frontAngle));
+    return Math.abs(diff) <= this.FOV_HALF_ANGLE;
+  }
+
+  // NOTE: O(enemies * obstacles * samples) complexity.
+  // For large scenes, consider spatial partitioning (grid/BVH) to reduce obstacle checks.
+  _calculateExposure(vx, vy, enemy, obstacles) {
+    const r = enemy.radius || this.ENEMY_RADIUS;
+    let visible = 0;
+
+    for (let i = 0; i < this.EXPOSURE_SAMPLES; i++) {
+      const angle = (2 * Math.PI * i) / this.EXPOSURE_SAMPLES;
+      const sx = enemy.x + r * Math.cos(angle);
+      const sy = enemy.y + r * Math.sin(angle);
+
+      const dx = sx - vx;
+      const dy = sy - vy;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist < this.EPSILON) { visible++; continue; }
+
+      const ndx = dx / dist;
+      const ndy = dy / dist;
+
+      let blocked = false;
+      for (const obs of obstacles) {
+        const t = this._rayAABBIntersect(vx, vy, ndx, ndy, obs);
+        if (t < dist) { blocked = true; break; }
+      }
+
+      if (!blocked) visible++;
+    }
+
+    return (visible / this.EXPOSURE_SAMPLES) * 100;
+  }
+
+  _rayAABBIntersect(ox, oy, dx, dy, rect) {
+    // Slab method: returns distance to first intersection or Infinity
+    let tmin = 0;
+    let tmax = Infinity;
+
+    // X slab
+    if (Math.abs(dx) > this.EPSILON) {
+      const invDx = 1 / dx;
+      let t1 = (rect.x - ox) * invDx;
+      let t2 = (rect.x + rect.w - ox) * invDx;
+      if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+      tmin = Math.max(tmin, t1);
+      tmax = Math.min(tmax, t2);
+      if (tmin > tmax) return Infinity;
+    } else {
+      if (ox < rect.x || ox > rect.x + rect.w) return Infinity;
+    }
+
+    // Y slab
+    if (Math.abs(dy) > this.EPSILON) {
+      const invDy = 1 / dy;
+      let t1 = (rect.y - oy) * invDy;
+      let t2 = (rect.y + rect.h - oy) * invDy;
+      if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+      tmin = Math.max(tmin, t1);
+      tmax = Math.min(tmax, t2);
+      if (tmin > tmax) return Infinity;
+    } else {
+      if (oy < rect.y || oy > rect.y + rect.h) return Infinity;
+    }
+
+    return tmin;
+  }
+}
+
+// ============================================================
 // App Initialization
 // ============================================================
 (function() {
-  let clock, input, storage, appData;
+  let clock, input, storage, appData, renderer;
   try {
     clock = new GameClock();
     input = new InputManager();
     storage = new Storage();
     appData = storage.load();
+    renderer = new Renderer(document.getElementById('game-canvas'));
   } catch (initError) {
     console.error('[App] Initialization failed:', initError);
     const banner = document.getElementById('warning-banner');
@@ -714,6 +1077,10 @@ class Storage {
     }
     return;
   }
+
+  // Hide canvas overlay now that renderer is active
+  const overlay = document.getElementById('canvas-overlay');
+  if (overlay) overlay.style.display = 'none';
 
   // Schema version warning
   if (appData._readOnly) {
@@ -794,34 +1161,83 @@ class Storage {
     statusMode.textContent = 'Mode: ' + (modeLabels[modeSelect.value] || modeSelect.value);
   });
 
-  // --- UI: Clock Display ---
-  let rafId = null;
-  function updateClock() {
-    clockDisplay.textContent = (clock.elapsed() / 1000).toFixed(3) + 's';
-    rafId = requestAnimationFrame(updateClock);
-  }
-  rafId = requestAnimationFrame(updateClock);
-
-  // --- Canvas Resize (debounced) ---
-  const canvas = document.getElementById('game-canvas');
+  // --- Canvas Resize ---
   let resizeTimer = null;
-  function resizeCanvas() {
-    const container = document.getElementById('canvas-container');
-    canvas.width = container.clientWidth;
-    canvas.height = container.clientHeight;
+  renderer.resize();
+
+  // --- Demo Scene (Free Practice default) ---
+  const demoState = {
+    character: { x: 0, y: 0 },
+    leanState: 'neutral',
+    obstacles: [],
+    enemies: []
+  };
+
+  function buildDemoScene() {
+    const cx = renderer.width / 2;
+    const cy = renderer.height * 0.65;
+
+    demoState.character.x = cx;
+    demoState.character.y = cy;
+
+    // L-shaped cover: horizontal wall + vertical wall
+    demoState.obstacles = [
+      { x: cx - 50, y: cy - 120, w: 100, h: 15 },    // horizontal wall
+      { x: cx - 50, y: cy - 200, w: 15, h: 80 },     // left vertical wall
+      { x: cx + 80, y: cy - 180, w: 15, h: 100 },    // right pillar
+    ];
+
+    // Enemies behind cover
+    demoState.enemies = [
+      { x: cx + 40, y: cy - 220, radius: 10 },       // behind horizontal wall
+      { x: cx - 80, y: cy - 250, radius: 10 },       // far left
+    ];
   }
+
+  buildDemoScene();
+
+  // --- Render Loop (dirty-flag gated) ---
+  let dirty = true;
+  let lastLeanState = 'neutral';
+
+  function renderLoop() {
+    const currentLean = input.leanState;
+    if (currentLean !== lastLeanState) {
+      lastLeanState = currentLean;
+      demoState.leanState = currentLean;
+      dirty = true;
+    }
+    if (dirty) {
+      renderer.render(demoState);
+      dirty = false;
+    }
+    clockDisplay.textContent = (clock.elapsed() / 1000).toFixed(3) + 's';
+    requestAnimationFrame(renderLoop);
+  }
+  requestAnimationFrame(renderLoop);
+
+  // Rebuild scene on resize (with cleanup via AbortController)
+  const resizeController = new AbortController();
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(resizeCanvas, 150);
-  });
-  resizeCanvas();
+    resizeTimer = setTimeout(() => {
+      renderer.resize();
+      buildDemoScene();
+      dirty = true;
+    }, 150);
+  }, { signal: resizeController.signal });
 
   // --- Expose for other modules and testing ---
   window.EFTTrainer = Object.freeze({
     clock,
     input,
     storage,
-    appData
+    appData,
+    renderer,
+    destroy() {
+      resizeController.abort();
+      renderer.destroy();
+    }
   });
 })();
 </script>

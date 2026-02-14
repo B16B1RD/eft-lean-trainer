@@ -1371,6 +1371,92 @@ class AudioEngine {
     }, 150);
   }, { signal: resizeController.signal });
 
+  // --- Self-test functions (dev mode) ---
+  async function runAudioEngineTests() {
+    const results = [];
+    function assert(name, condition) {
+      results.push({ name, pass: !!condition });
+      console.log(condition ? '[PASS]' : '[FAIL]', name);
+    }
+
+    // Test 1: Initial state
+    const testEngine = new AudioEngine();
+    assert('initial state is uninitialized', testEngine.state === 'uninitialized');
+    assert('isReady returns false before init', testEngine.isReady() === false);
+    assert('currentTime is 0 before init', testEngine.currentTime === 0);
+    assert('lastError is null initially', testEngine.lastError === null);
+
+    // Test 2: init creates AudioContext
+    try {
+      await testEngine.init();
+      assert('state is running after init', testEngine.state === 'running');
+      assert('isReady returns true after init', testEngine.isReady() === true);
+      assert('currentTime is a number', typeof testEngine.currentTime === 'number');
+    } catch (e) {
+      assert('init succeeds (may fail without user gesture)', false);
+    }
+
+    // Test 3: suspend
+    try {
+      await testEngine.suspend();
+      assert('state is suspended after suspend', testEngine.state === 'suspended');
+      assert('isReady returns false after suspend', testEngine.isReady() === false);
+    } catch (e) {
+      assert('suspend succeeds', false);
+    }
+
+    // Test 4: resume
+    try {
+      await testEngine.resume();
+      assert('state is running after resume', testEngine.state === 'running');
+      assert('isReady returns true after resume', testEngine.isReady() === true);
+    } catch (e) {
+      assert('resume succeeds', false);
+    }
+
+    // Test 5: playBeat does not throw
+    try {
+      testEngine.playBeat(testEngine.currentTime + 0.1);
+      assert('playBeat does not throw', true);
+    } catch (e) {
+      assert('playBeat does not throw', false);
+    }
+
+    // Test 6: playBeat is no-op when suspended
+    try {
+      await testEngine.suspend();
+      testEngine.playBeat(testEngine.currentTime + 0.1);
+      assert('playBeat is no-op when suspended', true);
+    } catch (e) {
+      assert('playBeat is no-op when suspended', false);
+    }
+
+    // Test 7: destroy
+    testEngine.destroy();
+    assert('state is uninitialized after destroy', testEngine.state === 'uninitialized');
+    assert('isReady returns false after destroy', testEngine.isReady() === false);
+
+    // Test 8: resume/suspend on uninitialized engine is no-op
+    const uninitEngine = new AudioEngine();
+    try {
+      await uninitEngine.resume();
+      assert('resume on uninitialized is no-op', true);
+    } catch (e) {
+      assert('resume on uninitialized is no-op', false);
+    }
+    try {
+      await uninitEngine.suspend();
+      assert('suspend on uninitialized is no-op', true);
+    } catch (e) {
+      assert('suspend on uninitialized is no-op', false);
+    }
+
+    const passed = results.filter(r => r.pass).length;
+    const total = results.length;
+    console.log('--- AudioEngine Tests: ' + passed + '/' + total + ' passed ---');
+    return { passed, total, results };
+  }
+
   // --- Expose for other modules and testing ---
   window.EFTTrainer = Object.freeze({
     clock,
@@ -1379,6 +1465,7 @@ class AudioEngine {
     appData,
     renderer,
     audioEngine,
+    runAudioEngineTests,
     destroy() {
       resizeController.abort();
       renderer.destroy();

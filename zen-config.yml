@@ -1,0 +1,34 @@
+# zen-workflow configuration
+version: "1.0"
+
+project:
+  type: generic
+  name: "eft-lean-trainer"
+
+github:
+  projects:
+    enabled: true
+    project_number: 5
+    owner: "B16B1RD"
+
+branch:
+  pattern: "{type}/issue-{number}-{slug}"
+  types:
+    feature: "feat"
+    bugfix: "fix"
+    documentation: "docs"
+    refactor: "refactor"
+    chore: "chore"
+
+commit:
+  style: conventional
+  enforce: false
+
+# Iteration settings
+iteration:
+  enabled: false
+  field_name: "Sprint"
+  auto_assign: true
+  show_in_list: true
+
+language: auto

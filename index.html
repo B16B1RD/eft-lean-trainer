@@ -1074,17 +1074,28 @@ class AudioEngine {
   async init() {
     if (!this._audioCtx) {
       this._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      // removeEventListener is a no-op if not registered; guards against double-registration after destroy()
+      document.removeEventListener('visibilitychange', this._onVisibilityChange);
       document.addEventListener('visibilitychange', this._onVisibilityChange);
     }
 
     if (this._audioCtx.state === 'suspended') {
-      try {
-        await this._audioCtx.resume();
-        this._lastError = null;
-      } catch (e) {
-        this._lastError = e;
-        throw e;
-      }
+      await this._tryResume();
+    }
+  }
+
+  /**
+   * Attempt to resume AudioContext. Shared by init() and resume().
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _tryResume() {
+    try {
+      await this._audioCtx.resume();
+      this._lastError = null;
+    } catch (e) {
+      this._lastError = e;
+      throw e;
     }
   }
 
@@ -1119,17 +1130,13 @@ class AudioEngine {
    */
   async resume() {
     if (!this._audioCtx) return;
-    try {
-      await this._audioCtx.resume();
-      this._lastError = null;
-    } catch (e) {
-      this._lastError = e;
-      throw e;
-    }
+    await this._tryResume();
   }
 
   /**
    * Suspend AudioContext. Returns a Promise.
+   * Public API methods (suspend, resume, init) propagate errors via throw
+   * so callers can handle them explicitly.
    * @returns {Promise<void>}
    */
   async suspend() {
@@ -1177,6 +1184,8 @@ class AudioEngine {
   /**
    * Handle visibility change for background recovery.
    * When returning from background, check and attempt resume.
+   * Unlike public API methods, this internal handler uses catch+warn
+   * because it fires automatically without caller context to handle errors.
    */
   _handleVisibilityChange() {
     if (!document.hidden && this._audioCtx && this._audioCtx.state === 'suspended') {
@@ -1194,7 +1203,9 @@ class AudioEngine {
   destroy() {
     document.removeEventListener('visibilitychange', this._onVisibilityChange);
     if (this._audioCtx) {
-      this._audioCtx.close().catch(() => {});
+      this._audioCtx.close().catch(e => {
+        console.warn('[AudioEngine] Failed to close AudioContext:', e);
+      });
       this._audioCtx = null;
     }
   }
@@ -1450,6 +1461,7 @@ class AudioEngine {
     } catch (e) {
       assert('suspend on uninitialized is no-op', false);
     }
+    uninitEngine.destroy();
 
     const passed = results.filter(r => r.pass).length;
     const total = results.length;

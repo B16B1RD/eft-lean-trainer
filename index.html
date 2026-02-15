@@ -200,7 +200,7 @@ html, body {
   background: var(--key-bg);
   border: 1px solid var(--key-border);
   border-radius: 4px;
-  font-size: 14px;
+  font-size: 18px;
   font-weight: bold;
   color: var(--text-secondary);
   transition: all 0.08s;
@@ -229,7 +229,6 @@ html, body {
 
 #lean-state-display {
   font-size: 10px;
-  text-transform: uppercase;
   letter-spacing: 2px;
   color: var(--text-muted);
   margin-top: 4px;
@@ -997,14 +996,14 @@ html, body {
       <!-- Key Indicators -->
       <div id="key-indicators">
         <div class="key-row">
-          <div class="key" data-key="KeyQ">Q</div>
-          <div class="key" data-key="KeyW">W</div>
-          <div class="key" data-key="KeyE">E</div>
+          <div class="key" data-key="KeyQ">↶</div>
+          <div class="key" data-key="KeyW">↑</div>
+          <div class="key" data-key="KeyE">↷</div>
         </div>
         <div class="key-row">
-          <div class="key" data-key="KeyA">A</div>
-          <div class="key" data-key="KeyS">S</div>
-          <div class="key" data-key="KeyD">D</div>
+          <div class="key" data-key="KeyA">←</div>
+          <div class="key" data-key="KeyS">↓</div>
+          <div class="key" data-key="KeyD">→</div>
         </div>
         <div id="lean-state-display">NEUTRAL</div>
       </div>
@@ -1015,7 +1014,7 @@ html, body {
           <div class="placeholder">Select a mode to begin</div>
         </div>
         <div id="settings-bar">
-          <span>Press WASD + Q/E to practice</span>
+          <span>Press ↑←↓→ + ↶↷ to practice</span>
           <span id="clock-display">0.000s</span>
           <button class="settings-btn" id="btn-kro-diagnostic">KBD Diag</button>
           <button class="settings-btn danger" id="btn-data-reset">Reset</button>
@@ -1226,6 +1225,16 @@ class InputManager {
     eEl.classList.remove('lean-left', 'lean-right');
     qEl.classList.add('lean-' + this._keyToLean.KeyQ);
     eEl.classList.add('lean-' + this._keyToLean.KeyE);
+    qEl.textContent = this.getKeySymbol('KeyQ');
+    eEl.textContent = this.getKeySymbol('KeyE');
+  }
+
+  getKeySymbol(keyCode) {
+    const moveSymbols = { KeyW: '↑', KeyA: '←', KeyS: '↓', KeyD: '→' };
+    if (moveSymbols[keyCode]) return moveSymbols[keyCode];
+    if (keyCode === 'KeyQ') return this._keyToLean.KeyQ === 'right' ? '↷' : '↶';
+    if (keyCode === 'KeyE') return this._keyToLean.KeyE === 'right' ? '↷' : '↶';
+    return keyCode;
   }
 
   getLeanKeyForDirection(direction) {
@@ -2139,12 +2148,12 @@ class FreePracticeMode extends ModeLifecycle {
     this._warmupActive = false;
     this._warmupStep = 0;
     this._warmupSteps = [
-      { key: 'KeyW', label: 'W', desc: 'Forward — Move up' },
-      { key: 'KeyA', label: 'A', desc: 'Left — Move left' },
-      { key: 'KeyS', label: 'S', desc: 'Backward — Move down' },
-      { key: 'KeyD', label: 'D', desc: 'Right — Move right' },
-      { key: 'KeyQ', label: 'Q', desc: 'Lean Left — Peek left around cover' },
-      { key: 'KeyE', label: 'E', desc: 'Lean Right — Peek right around cover' },
+      { key: 'KeyW', label: '↑', desc: 'Forward — Move up' },
+      { key: 'KeyA', label: '←', desc: 'Left — Move left' },
+      { key: 'KeyS', label: '↓', desc: 'Backward — Move down' },
+      { key: 'KeyD', label: '→', desc: 'Right — Move right' },
+      { key: 'KeyQ', label: null, desc: 'Lean — Peek around cover' },
+      { key: 'KeyE', label: null, desc: 'Lean — Peek around cover' },
     ];
   }
 
@@ -2400,7 +2409,8 @@ class FreePracticeMode extends ModeLifecycle {
     const keyEl = document.getElementById('warmup-key');
     const descEl = document.getElementById('warmup-desc');
     const progressEl = document.getElementById('warmup-progress');
-    if (keyEl) { keyEl.textContent = step.label; keyEl.classList.remove('pressed'); }
+    const label = step.label !== null ? step.label : this._inputManager.getKeySymbol(step.key);
+    if (keyEl) { keyEl.textContent = label; keyEl.classList.remove('pressed'); }
     if (descEl) descEl.textContent = step.desc;
     if (progressEl) {
       progressEl.textContent = '';
@@ -2463,10 +2473,7 @@ class ReactionDrillMode extends ModeLifecycle {
       ]}
     };
 
-    // Key display names
-    this._keyNames = {
-      KeyQ: 'Q', KeyE: 'E', KeyW: 'W', KeyA: 'A', KeyS: 'S', KeyD: 'D'
-    };
+    // Key display via InputManager.getKeySymbol()
 
     // Drill state
     this._currentLevel = 1;
@@ -2745,7 +2752,7 @@ class ReactionDrillMode extends ModeLifecycle {
       }
       const keyEl = document.createElement('div');
       keyEl.className = 'drill-prompt-key';
-      keyEl.textContent = this._keyNames[currentKeys[i]] || currentKeys[i];
+      keyEl.textContent = this._input.getKeySymbol(currentKeys[i]);
       keysDiv.appendChild(keyEl);
     }
     prompt.appendChild(keysDiv);
@@ -3021,7 +3028,7 @@ class ReactionDrillMode extends ModeLifecycle {
     const warnings = [];
     for (const [combo, stats] of Object.entries(this._kroAttempts)) {
       if (stats.total >= ReactionDrillMode.KRO_MIN_ATTEMPTS && (stats.failed / stats.total) >= ReactionDrillMode.KRO_FAIL_THRESHOLD) {
-        const keys = combo.split('+').map(k => this._keyNames[k] || k);
+        const keys = combo.split('+').map(k => this._input.getKeySymbol(k));
         warnings.push(keys.join('+'));
       }
     }
@@ -3100,7 +3107,7 @@ class ComboDrillMode extends ModeLifecycle {
     this._storage = storage;
     this._appData = appData;
     this._drillPanel = null;
-    this._keyNames = ComboDrillMode.KEY_NAMES;
+    // Key display via InputManager.getKeySymbol()
 
     // Drill state
     this._selectedCombo = null;
@@ -3520,7 +3527,7 @@ class ComboDrillMode extends ModeLifecycle {
 
       const keysSpan = document.createElement('span');
       keysSpan.className = 'step-keys';
-      keysSpan.textContent = resolvedSteps[i].map(k => this._keyNames[k] || k).join('+');
+      keysSpan.textContent = resolvedSteps[i].map(k => this._input.getKeySymbol(k)).join('+');
 
       stepEl.appendChild(actionSpan);
       stepEl.appendChild(keysSpan);
@@ -3617,7 +3624,7 @@ class ComboDrillMode extends ModeLifecycle {
       }
       const keyEl = document.createElement('div');
       keyEl.className = 'drill-prompt-key';
-      keyEl.textContent = this._keyNames[resolvedKeys[i]] || resolvedKeys[i];
+      keyEl.textContent = this._input.getKeySymbol(resolvedKeys[i]);
       keysDiv.appendChild(keyEl);
     }
 
@@ -3754,9 +3761,7 @@ ComboDrillMode.STEP_DELAY_MS = 200;
 ComboDrillMode.STEP_FEEDBACK_MS = 500;
 ComboDrillMode.DEMO_SPEED_FACTOR = 0.6;
 ComboDrillMode.UNLOCK_ORDER = ['jiggle_right', 'strafe_peek_right', 'forward_peek_right', 'alternating_peek'];
-ComboDrillMode.KEY_NAMES = {
-  KeyQ: 'Q', KeyE: 'E', KeyW: 'W', KeyA: 'A', KeyS: 'S', KeyD: 'D'
-};
+// Key display names are now provided by InputManager.getKeySymbol()
 
 // ============================================================
 // RhythmDrillMode — BPM-based lean rhythm drill
@@ -4177,10 +4182,12 @@ class RhythmDrillMode extends ModeLifecycle {
   _createPatternPreview() {
     const patternDiv = document.createElement('div');
     patternDiv.className = 'combo-demo-area';
+    const rightKey = this._input.getLeanKeyForDirection('right');
+    const leftKey = this._input.getLeanKeyForDirection('left');
     const steps = [
-      { label: 'E', desc: 'Lean R' },
+      { label: this._input.getKeySymbol(rightKey), desc: 'Lean R' },
       { label: '—', desc: 'Center' },
-      { label: 'Q', desc: 'Lean L' },
+      { label: this._input.getKeySymbol(leftKey), desc: 'Lean L' },
       { label: '—', desc: 'Center' }
     ];
     for (let i = 0; i < steps.length; i++) {
@@ -4335,11 +4342,11 @@ class RhythmDrillMode extends ModeLifecycle {
     keyEl.className = 'drill-prompt-key';
     if (expected === 'right') {
       const rightKey = this._input.getLeanKeyForDirection('right');
-      keyEl.textContent = rightKey === 'KeyQ' ? 'Q' : 'E';
+      keyEl.textContent = this._input.getKeySymbol(rightKey);
       keyEl.classList.add('active');
     } else if (expected === 'left') {
       const leftKey = this._input.getLeanKeyForDirection('left');
-      keyEl.textContent = leftKey === 'KeyQ' ? 'Q' : 'E';
+      keyEl.textContent = this._input.getKeySymbol(leftKey);
       keyEl.classList.add('active');
     } else {
       keyEl.textContent = '—';
@@ -4606,7 +4613,7 @@ class PlaceholderMode extends ModeLifecycle {
   }
 
   function updateLeanDisplay(state) {
-    const labels = { neutral: 'NEUTRAL', left: '◄ LEFT', right: 'RIGHT ►' };
+    const labels = { neutral: 'NEUTRAL', left: '↶ リーン', right: 'リーン ↷' };
     leanDisplay.textContent = labels[state] || 'NEUTRAL';
     leanDisplay.className = '';
     if (state === 'left') leanDisplay.classList.add('lean-left');
@@ -5718,6 +5725,19 @@ class PlaceholderMode extends ModeLifecycle {
     testInput.setLeanDirection(true); // standard
     assert('Standard: left key is KeyQ', testInput.getLeanKeyForDirection('left') === 'KeyQ');
     assert('Standard: right key is KeyE', testInput.getLeanKeyForDirection('right') === 'KeyE');
+
+    // === getKeySymbol ===
+    testInput.setLeanDirection(false); // reversed: Q=right, E=left
+    assert('Reversed: KeyW symbol is ↑', testInput.getKeySymbol('KeyW') === '↑');
+    assert('Reversed: KeyA symbol is ←', testInput.getKeySymbol('KeyA') === '←');
+    assert('Reversed: KeyS symbol is ↓', testInput.getKeySymbol('KeyS') === '↓');
+    assert('Reversed: KeyD symbol is →', testInput.getKeySymbol('KeyD') === '→');
+    assert('Reversed: KeyQ symbol is ↷ (right)', testInput.getKeySymbol('KeyQ') === '↷');
+    assert('Reversed: KeyE symbol is ↶ (left)', testInput.getKeySymbol('KeyE') === '↶');
+
+    testInput.setLeanDirection(true); // standard: Q=left, E=right
+    assert('Standard: KeyQ symbol is ↶ (left)', testInput.getKeySymbol('KeyQ') === '↶');
+    assert('Standard: KeyE symbol is ↷ (right)', testInput.getKeySymbol('KeyE') === '↷');
 
     // Cleanup
     testInput.destroy();

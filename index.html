@@ -205,6 +205,7 @@ html, body {
   color: var(--text-secondary);
   transition: all 0.08s;
   text-shadow: none;
+  font-family: 'Segoe UI Symbol', 'Apple Symbols', 'Noto Sans Symbols 2', sans-serif;
 }
 
 .key.active {
@@ -229,7 +230,7 @@ html, body {
 
 #lean-state-display {
   font-size: 10px;
-  letter-spacing: 2px;
+  letter-spacing: 1px;
   color: var(--text-muted);
   margin-top: 4px;
   min-height: 14px;
@@ -962,7 +963,7 @@ html, body {
       </div>
       <div class="toggle-group" role="group" aria-label="リーン方向">
         <span>Layout:</span>
-        <button class="toggle-btn active" data-lean-dir="reversed" aria-pressed="true">Q=右 E=左</button>
+        <button class="toggle-btn active" data-lean-dir="reversed" aria-pressed="true">↷右 ↶左</button>
         <button class="toggle-btn" data-lean-dir="standard" aria-pressed="false">EFT標準</button>
       </div>
       <select id="mode-select">
@@ -996,14 +997,14 @@ html, body {
       <!-- Key Indicators -->
       <div id="key-indicators">
         <div class="key-row">
-          <div class="key" data-key="KeyQ">↶</div>
-          <div class="key" data-key="KeyW">↑</div>
-          <div class="key" data-key="KeyE">↷</div>
+          <div class="key" data-key="KeyQ" aria-label="リーン">↶</div>
+          <div class="key" data-key="KeyW" aria-label="前進">↑</div>
+          <div class="key" data-key="KeyE" aria-label="リーン">↷</div>
         </div>
         <div class="key-row">
-          <div class="key" data-key="KeyA">←</div>
-          <div class="key" data-key="KeyS">↓</div>
-          <div class="key" data-key="KeyD">→</div>
+          <div class="key" data-key="KeyA" aria-label="左移動">←</div>
+          <div class="key" data-key="KeyS" aria-label="後退">↓</div>
+          <div class="key" data-key="KeyD" aria-label="右移動">→</div>
         </div>
         <div id="lean-state-display">NEUTRAL</div>
       </div>
@@ -1014,7 +1015,7 @@ html, body {
           <div class="placeholder">Select a mode to begin</div>
         </div>
         <div id="settings-bar">
-          <span>Press ↑←↓→ + ↶↷ to practice</span>
+          <span>移動: ↑←↓→ / リーン: ↶↷</span>
           <span id="clock-display">0.000s</span>
           <button class="settings-btn" id="btn-kro-diagnostic">KBD Diag</button>
           <button class="settings-btn danger" id="btn-data-reset">Reset</button>
@@ -1227,6 +1228,10 @@ class InputManager {
     eEl.classList.add('lean-' + this._keyToLean.KeyE);
     qEl.textContent = this.getKeySymbol('KeyQ');
     eEl.textContent = this.getKeySymbol('KeyE');
+    const qDir = this._keyToLean.KeyQ === 'right' ? '右リーン' : '左リーン';
+    const eDir = this._keyToLean.KeyE === 'right' ? '右リーン' : '左リーン';
+    qEl.setAttribute('aria-label', qDir);
+    eEl.setAttribute('aria-label', eDir);
   }
 
   getKeySymbol(keyCode) {
@@ -4102,7 +4107,9 @@ class RhythmDrillMode extends ModeLifecycle {
 
     const desc = document.createElement('div');
     desc.className = 'combo-description';
-    desc.textContent = 'BPMに合わせてE→戻→Q→戻のリーン操作を繰り返します。ビートに合わせて正確に入力しましょう。';
+    const rSym = this._input.getKeySymbol(this._input.getLeanKeyForDirection('right'));
+    const lSym = this._input.getKeySymbol(this._input.getLeanKeyForDirection('left'));
+    desc.textContent = 'BPMに合わせて' + rSym + '→戻→' + lSym + '→戻のリーン操作を繰り返します。ビートに合わせて正確に入力しましょう。';
     panel.appendChild(desc);
 
     panel.appendChild(this._createPatternPreview());

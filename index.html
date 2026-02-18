@@ -1415,7 +1415,7 @@ class Storage {
 }
 
 // ============================================================
-// Renderer — Canvas drawing engine with raycast visualization
+// Renderer — FPS-perspective drawing engine using raycasting
 // ============================================================
 class Renderer {
   constructor(canvas, config = {}) {
@@ -1441,6 +1441,11 @@ class Renderer {
 
     // Colors matching military-dark theme
     this.COLORS = {
+      ceiling: '#1a2a1a',
+      floor: '#0d160d',
+      wallBase: [90, 106, 122],  // rgb of #5a6a7a
+      enemyRGB: [233, 69, 96],   // rgb of #e94560
+      // Legacy colors retained for test compatibility
       grid: 'rgba(40, 65, 45, 0.3)',
       charBody: '#3a7ecf',
       charStroke: '#5a9eef',
@@ -1470,25 +1475,28 @@ class Renderer {
 
     const { obstacles, enemies, character: char, leanState } = this._sanitizeState(state, w, h);
 
-    // Calculate viewpoint based on lean
-    const vp = this._getViewpoint(char.x, char.y, leanState);
-    const frontAngle = this._getFrontAngle(leanState);
+    // Camera position: lean offset with obstacle collision clamp
+    const rawVP = this._getViewpoint(char.x, char.y, leanState);
+    const vp = this._clampCameraToObstacles(rawVP, char, obstacles);
+    const frontAngle = this._getFrontAngle();
 
-    // Draw layers back-to-front
-    this._drawGrid(ctx, w, h);
-    this._drawFOV(ctx, vp, frontAngle);
-    this._drawObstacles(ctx, obstacles);
+    // Apply canvas roll for lean tilt (カメラ横シフト + 画面ロール, not yaw)
+    const rollAngle = leanState === 'left' ? -this.LEAN_ROTATION
+                    : leanState === 'right' ? this.LEAN_ROTATION : 0;
 
-    // Raycast visibility and draw rays
-    const exposures = this._processVisibility(ctx, vp, frontAngle, enemies, obstacles);
-
-    this._drawEnemies(ctx, enemies);
-    this._drawCharacter(ctx, char.x, char.y, leanState, vp);
-
-    // Draw exposure percentages on top
-    for (const { enemy, exposure } of exposures) {
-      this._drawExposure(ctx, enemy, exposure);
+    ctx.save();
+    if (rollAngle !== 0) {
+      ctx.translate(w / 2, h / 2);
+      ctx.rotate(rollAngle);
+      ctx.translate(-w / 2, -h / 2);
     }
+
+    // Draw layers: ceiling/floor → walls → enemy sprites
+    this._drawFloorCeiling(ctx, w, h);
+    const zBuffer = this._castWallRays(ctx, vp, frontAngle, obstacles, w, h);
+    this._drawEnemySprites(ctx, vp, frontAngle, enemies, obstacles, zBuffer, w, h);
+
+    ctx.restore();
   }
 
   _sanitizeState(state, w, h) {
@@ -1498,19 +1506,6 @@ class Renderer {
       character: state.character || { x: w / 2, y: h / 2 },
       leanState: state.leanState || 'neutral',
     };
-  }
-
-  _processVisibility(ctx, vp, frontAngle, enemies, obstacles) {
-    const exposures = [];
-    for (const enemy of enemies) {
-      const inFOV = this._isInFOV(vp.x, vp.y, enemy.x, enemy.y, frontAngle);
-      this._drawRay(ctx, vp.x, vp.y, enemy, obstacles, inFOV);
-      if (inFOV) {
-        const exposure = this._calculateExposure(vp.x, vp.y, enemy, obstacles);
-        exposures.push({ enemy, exposure });
-      }
-    }
-    return exposures;
   }
 
   resize() {
@@ -1539,164 +1534,158 @@ class Renderer {
     return { x: cx + offsetX, y: cy };
   }
 
-  _getFrontAngle(leanState) {
-    // Front direction is -Y (up on canvas) = -PI/2 in atan2
-    let angle = -Math.PI / 2;
-    if (leanState === 'left') angle -= this.LEAN_ROTATION;
-    else if (leanState === 'right') angle += this.LEAN_ROTATION;
-    return angle;
+  _getFrontAngle() {
+    // Front direction is -Y (up on canvas) = -PI/2 in atan2.
+    // Lean uses canvas roll (not yaw), so the front angle is always fixed.
+    return -Math.PI / 2;
   }
 
-  // --- Drawing methods ---
+  // --- Camera collision ---
 
-  _drawGrid(ctx, w, h) {
-    ctx.strokeStyle = this.COLORS.grid;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let x = 0; x <= w; x += this.GRID_SIZE) {
-      ctx.moveTo(x + 0.5, 0);
-      ctx.lineTo(x + 0.5, h);
-    }
-    for (let y = 0; y <= h; y += this.GRID_SIZE) {
-      ctx.moveTo(0, y + 0.5);
-      ctx.lineTo(w, y + 0.5);
-    }
-    ctx.stroke();
-  }
-
-  _drawFOV(ctx, viewpoint, frontAngle) {
-    const startAngle = frontAngle - this.FOV_HALF_ANGLE;
-    const endAngle = frontAngle + this.FOV_HALF_ANGLE;
-
-    ctx.beginPath();
-    ctx.moveTo(viewpoint.x, viewpoint.y);
-    ctx.arc(viewpoint.x, viewpoint.y, this.FOV_RANGE, startAngle, endAngle);
-    ctx.closePath();
-    ctx.fillStyle = this.COLORS.fov;
-    ctx.fill();
-    ctx.strokeStyle = this.COLORS.fovStroke;
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
-
-  _drawObstacles(ctx, obstacles) {
+  _clampCameraToObstacles(vp, char, obstacles) {
+    // Prevent camera from entering obstacles when leaning.
+    // If camera lands inside an obstacle, walk back along the lean vector
+    // to the obstacle boundary minus a small epsilon.
+    const EPS = 0.5;
     for (const obs of obstacles) {
-      ctx.fillStyle = this.COLORS.obstacle;
-      ctx.strokeStyle = this.COLORS.obstacleStroke;
-      ctx.lineWidth = 1;
-      ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
-      ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
-    }
-  }
-
-  _drawCharacter(ctx, cx, cy, leanState, viewpoint) {
-    // Draw body circle
-    ctx.beginPath();
-    ctx.arc(cx, cy, this.CHAR_RADIUS, 0, Math.PI * 2);
-    ctx.fillStyle = this.COLORS.charBody;
-    ctx.fill();
-    ctx.strokeStyle = this.COLORS.charStroke;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    // Draw front direction indicator
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.lineTo(cx, cy - this.CHAR_RADIUS - 6);
-    ctx.strokeStyle = this.COLORS.charStroke;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    // Draw lean tilt indicator
-    if (leanState !== 'neutral') {
-      const tiltX = leanState === 'left' ? -8 : 8;
-      ctx.beginPath();
-      ctx.moveTo(cx, cy - this.CHAR_RADIUS);
-      ctx.lineTo(cx + tiltX, cy - this.CHAR_RADIUS - 8);
-      ctx.strokeStyle = this.COLORS.viewpoint;
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      // Draw viewpoint dot
-      ctx.beginPath();
-      ctx.arc(viewpoint.x, viewpoint.y, 3, 0, Math.PI * 2);
-      ctx.fillStyle = this.COLORS.viewpoint;
-      ctx.fill();
-    }
-  }
-
-  _drawEnemies(ctx, enemies) {
-    for (const enemy of enemies) {
-      const r = enemy.radius || this.ENEMY_RADIUS;
-      // Diamond shape
-      ctx.beginPath();
-      ctx.moveTo(enemy.x, enemy.y - r);
-      ctx.lineTo(enemy.x + r, enemy.y);
-      ctx.lineTo(enemy.x, enemy.y + r);
-      ctx.lineTo(enemy.x - r, enemy.y);
-      ctx.closePath();
-      ctx.fillStyle = this.COLORS.enemy;
-      ctx.fill();
-      ctx.strokeStyle = this.COLORS.enemyStroke;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    }
-  }
-
-  _drawRay(ctx, vx, vy, enemy, obstacles, inFOV) {
-    if (!inFOV) return;
-
-    const dx = enemy.x - vx;
-    const dy = enemy.y - vy;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist < this.EPSILON) return;
-
-    const ndx = dx / dist;
-    const ndy = dy / dist;
-
-    // Find closest obstacle intersection
-    let minT = dist;
-    let blocked = false;
-    for (const obs of obstacles) {
-      const t = this._rayAABBIntersect(vx, vy, ndx, ndy, obs);
-      if (t < minT) {
-        minT = t;
-        blocked = true;
+      if (vp.x > obs.x - EPS && vp.x < obs.x + obs.w + EPS &&
+          vp.y > obs.y - EPS && vp.y < obs.y + obs.h + EPS) {
+        const dx = vp.x - char.x;
+        const dy = vp.y - char.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < this.EPSILON) return { x: char.x, y: char.y };
+        const ndx = dx / dist;
+        const ndy = dy / dist;
+        const t = this._rayAABBIntersect(char.x, char.y, ndx, ndy, obs);
+        const clampedDist = Math.max(0, t - EPS);
+        return { x: char.x + ndx * clampedDist, y: char.y + ndy * clampedDist };
       }
     }
-
-    const endX = vx + ndx * minT;
-    const endY = vy + ndy * minT;
-
-    ctx.save();
-    ctx.setLineDash([6, 4]);
-    ctx.lineWidth = 1.5;
-    ctx.strokeStyle = blocked ? this.COLORS.rayBlocked : this.COLORS.rayVisible;
-    ctx.beginPath();
-    ctx.moveTo(vx, vy);
-    ctx.lineTo(endX, endY);
-    ctx.stroke();
-    ctx.restore();
+    return vp;
   }
 
-  _drawExposure(ctx, enemy, exposure) {
-    const text = Math.round(exposure) + '%';
-    ctx.font = 'bold 12px monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'bottom';
+  // --- FPS drawing ---
 
-    const r = enemy.radius || this.ENEMY_RADIUS;
-    const tx = enemy.x;
-    const ty = enemy.y - r - 8;
+  _drawFloorCeiling(ctx, w, h) {
+    ctx.fillStyle = this.COLORS.ceiling;
+    ctx.fillRect(0, 0, w, h / 2);
+    ctx.fillStyle = this.COLORS.floor;
+    ctx.fillRect(0, h / 2, w, h / 2);
+  }
 
-    // Background for readability
-    const metrics = ctx.measureText(text);
-    const pw = metrics.width + 8;
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-    ctx.fillRect(tx - pw / 2, ty - 13, pw, 16);
+  _castWallRays(ctx, vp, frontAngle, obstacles, w, h) {
+    // Cast one ray per screen column. Returns zBuffer (perpendicular distance per column).
+    const zBuffer = new Float32Array(w);
+    const wallScale = h * this.FOV_RANGE;
+    const [baseR, baseG, baseB] = this.COLORS.wallBase;
+    const maxDist = this.FOV_RANGE * 2;
+    const fovTotal = this.FOV_HALF_ANGLE * 2;
+    const sentinel = this.FOV_RANGE * 4;
+    const wMinus1 = Math.max(1, w - 1);
 
-    ctx.fillStyle = exposure > 0 ? this.COLORS.rayVisible : this.COLORS.rayBlocked;
-    ctx.fillText(text, tx, ty);
+    for (let x = 0; x < w; x++) {
+      // Ray angle: linearly distributed across FOV
+      const rayAngle = frontAngle + ((x / wMinus1) - 0.5) * fovTotal;
+      const rdx = Math.cos(rayAngle);
+      const rdy = Math.sin(rayAngle);
+
+      // Find nearest obstacle hit
+      let minDist = sentinel;
+      for (const obs of obstacles) {
+        const t = this._rayAABBIntersect(vp.x, vp.y, rdx, rdy, obs);
+        if (t < minDist) minDist = t;
+      }
+
+      // Fish-eye correction: project onto the view plane (perpendicular distance)
+      const perpDist = Math.max(0.1, minDist * Math.cos(rayAngle - frontAngle));
+      zBuffer[x] = perpDist;
+
+      if (minDist >= sentinel) continue; // ray hit nothing
+
+      // Compute wall slice height and vertical bounds
+      const sliceH = Math.min(h * 4, wallScale / perpDist);
+      const wallTop = Math.max(0, (h - sliceH) / 2);
+      const wallBottom = Math.min(h, (h + sliceH) / 2);
+
+      // Distance shading: darker at range, brighter up close
+      const brightness = Math.max(0.15, 1 - perpDist / maxDist);
+      const r = Math.round(baseR * brightness);
+      const g = Math.round(baseG * brightness);
+      const b = Math.round(baseB * brightness);
+
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(x, wallTop, 1, wallBottom - wallTop);
+    }
+
+    return zBuffer;
+  }
+
+  _drawEnemySprites(ctx, vp, frontAngle, enemies, obstacles, zBuffer, w, h) {
+    // Render enemy billboards sorted far-to-near (painter's algorithm).
+    // Each sprite column is clipped against zBuffer to avoid rendering
+    // enemies visible through walls.
+    const projPlaneDist = (w / 2) / Math.tan(this.FOV_HALF_ANGLE);
+    const wallScale = h * this.FOV_RANGE;
+    const [eR, eG, eB] = this.COLORS.enemyRGB;
+    const maxDist = this.FOV_RANGE * 2;
+
+    const sorted = enemies.slice().sort((a, b) => {
+      const dA = (a.x - vp.x) ** 2 + (a.y - vp.y) ** 2;
+      const dB = (b.x - vp.x) ** 2 + (b.y - vp.y) ** 2;
+      return dB - dA;
+    });
+
+    for (const enemy of sorted) {
+      const dx = enemy.x - vp.x;
+      const dy = enemy.y - vp.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < this.EPSILON) continue;
+
+      // Skip if outside FOV
+      if (!this._isInFOV(vp.x, vp.y, enemy.x, enemy.y, frontAngle)) continue;
+
+      // Skip if fully behind a wall (LOS check along enemy center direction)
+      const ndx = dx / dist;
+      const ndy = dy / dist;
+      let blocked = false;
+      for (const obs of obstacles) {
+        const t = this._rayAABBIntersect(vp.x, vp.y, ndx, ndy, obs);
+        if (t < dist - (enemy.radius || this.ENEMY_RADIUS)) { blocked = true; break; }
+      }
+      if (blocked) continue;
+
+      // Project enemy center onto screen X
+      const angleToEnemy = Math.atan2(dy, dx);
+      const angleDiff = Math.atan2(
+        Math.sin(angleToEnemy - frontAngle),
+        Math.cos(angleToEnemy - frontAngle)
+      );
+      const screenX = w / 2 + Math.tan(angleDiff) * projPlaneDist;
+
+      // Sprite dimensions based on distance
+      const r = enemy.radius || this.ENEMY_RADIUS;
+      const spriteH = Math.min(h * 4, wallScale / dist);
+      const spriteW = spriteH * (r / this.ENEMY_RADIUS);
+      const spriteLeft = Math.round(screenX - spriteW / 2);
+      const spriteRight = Math.round(screenX + spriteW / 2);
+      const spriteTop = Math.max(0, Math.round((h - spriteH) / 2));
+      const spriteBottom = Math.min(h, Math.round((h + spriteH) / 2));
+      const spriteDist = dist * Math.cos(angleDiff); // perpendicular depth for zBuffer
+
+      // Distance shading
+      const brightness = Math.max(0.3, 1 - dist / maxDist);
+      const r2 = Math.round(eR * brightness);
+      const g2 = Math.round(eG * brightness);
+      const b2 = Math.round(eB * brightness);
+      ctx.fillStyle = `rgb(${r2},${g2},${b2})`;
+
+      // Draw column-by-column, skipping columns behind walls
+      for (let sx = Math.max(0, spriteLeft); sx < Math.min(w, spriteRight); sx++) {
+        if (spriteDist < zBuffer[sx]) {
+          ctx.fillRect(sx, spriteTop, 1, spriteBottom - spriteTop);
+        }
+      }
+    }
   }
 
   // --- Raycast / geometry ---
@@ -1707,38 +1696,6 @@ class Renderer {
     const angle = Math.atan2(dy, dx);
     const diff = Math.atan2(Math.sin(angle - frontAngle), Math.cos(angle - frontAngle));
     return Math.abs(diff) <= this.FOV_HALF_ANGLE;
-  }
-
-  // NOTE: O(enemies * obstacles * samples) complexity.
-  // For large scenes, consider spatial partitioning (grid/BVH) to reduce obstacle checks.
-  _calculateExposure(vx, vy, enemy, obstacles) {
-    const r = enemy.radius || this.ENEMY_RADIUS;
-    let visible = 0;
-
-    for (let i = 0; i < this.EXPOSURE_SAMPLES; i++) {
-      const angle = (2 * Math.PI * i) / this.EXPOSURE_SAMPLES;
-      const sx = enemy.x + r * Math.cos(angle);
-      const sy = enemy.y + r * Math.sin(angle);
-
-      const dx = sx - vx;
-      const dy = sy - vy;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-
-      if (dist < this.EPSILON) { visible++; continue; }
-
-      const ndx = dx / dist;
-      const ndy = dy / dist;
-
-      let blocked = false;
-      for (const obs of obstacles) {
-        const t = this._rayAABBIntersect(vx, vy, ndx, ndy, obs);
-        if (t < dist) { blocked = true; break; }
-      }
-
-      if (!blocked) visible++;
-    }
-
-    return (visible / this.EXPOSURE_SAMPLES) * 100;
   }
 
   _rayAABBIntersect(ox, oy, dx, dy, rect) {
@@ -5818,8 +5775,8 @@ class PlaceholderMode extends ModeLifecycle {
     const { assert, summary } = createTestContext();
 
     // Uses the app-level renderer instance for geometry tests.
-    // Renderer methods under test (_isInFOV, _rayAABBIntersect, _calculateExposure)
-    // are pure computation with no side effects, so sharing the instance is safe.
+    // Renderer methods under test are pure computation with no side effects,
+    // so sharing the instance is safe.
     const testRenderer = renderer;
 
     // Test 1: _isInFOV - target directly in front (upward direction = -PI/2)
@@ -5853,20 +5810,31 @@ class PlaceholderMode extends ModeLifecycle {
     const missDist = testRenderer._rayAABBIntersect(200, 300, 1, 0, obstacle);
     assert('ray misses obstacle (infinite distance)', missDist === Infinity);
 
-    // Test 7: _calculateExposure - no obstacles means full exposure
-    const enemy = { x: 200, y: 100, radius: 10 };
-    const fullExposure = testRenderer._calculateExposure(200, 300, enemy, []);
-    assert('no obstacles = 100% exposure', fullExposure === 100);
+    // Test 7: _getFrontAngle always returns -PI/2 (lean uses roll, not yaw)
+    assert('_getFrontAngle returns -PI/2',
+      Math.abs(testRenderer._getFrontAngle() - (-Math.PI / 2)) < testRenderer.EPSILON);
 
-    // Test 8: obstacle completely blocks enemy
-    const blockingObs = { x: 150, y: 140, w: 100, h: 30 };
-    const blockedExposure = testRenderer._calculateExposure(200, 300, enemy, [blockingObs]);
-    assert('blocking obstacle = low exposure', blockedExposure < 50);
+    // Test 8: _clampCameraToObstacles - camera outside obstacle is unchanged
+    const char8 = { x: 200, y: 300 };
+    const obs8 = { x: 100, y: 100, w: 50, h: 50 };
+    const vp8 = { x: 220, y: 300 };
+    const clamped8 = testRenderer._clampCameraToObstacles(vp8, char8, [obs8]);
+    assert('camera outside obstacle is unchanged', clamped8.x === 220 && clamped8.y === 300);
 
-    // Test 9: obstacle partially blocks enemy
-    const partialObs = { x: 190, y: 140, w: 30, h: 20 };
-    const partialExposure = testRenderer._calculateExposure(200, 300, enemy, [partialObs]);
-    assert('partial obstacle = partial exposure', partialExposure > 0 && partialExposure < 100);
+    // Test 9: _clampCameraToObstacles - camera inside obstacle is clamped out
+    const char9 = { x: 200, y: 300 };
+    const obs9 = { x: 210, y: 295, w: 40, h: 10 };
+    const vp9 = { x: 220, y: 300 }; // inside obs9 (x:210-250, y:295-305)
+    const clamped9 = testRenderer._clampCameraToObstacles(vp9, char9, [obs9]);
+    const stillInside9 = clamped9.x > obs9.x && clamped9.x < obs9.x + obs9.w &&
+                         clamped9.y > obs9.y && clamped9.y < obs9.y + obs9.h;
+    assert('camera clamped out of obstacle', !stillInside9);
+
+    // Test 10: fish-eye correction formula - perpDist = hitDist * cos(angleDiff)
+    const angOffset = Math.PI / 6; // 30° from front = edge of FOV
+    const hitD = 100;
+    const expectedPerp = hitD * Math.cos(angOffset); // ~86.6
+    assert('fish-eye perpDist formula is correct', Math.abs(expectedPerp - 86.6) < 0.1);
 
     return summary('Raycast Tests');
   }

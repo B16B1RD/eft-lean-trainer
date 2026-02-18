@@ -1434,7 +1434,8 @@ class Renderer {
       LEAN_OFFSET_X: 20,
       LEAN_ROTATION: (5 * Math.PI) / 180, // 5°
       MAX_SLICE_FACTOR: 4,
-      MAX_RAY_DIST_FACTOR: 4,
+      MAX_RAY_DIST_FACTOR: 4,        // ray march / zBuffer sentinel distance (FOV_RANGE × 4)
+      MAX_BRIGHTNESS_DIST_FACTOR: 2, // brightness falloff distance (FOV_RANGE × 2, same as pre-optimization)
     };
     Object.assign(this, defaults);
     for (const k of Object.keys(defaults)) {
@@ -1488,9 +1489,9 @@ class Renderer {
 
     // Draw layers: ceiling/floor → walls → enemy sprites
     const wallScale = h * this.FOV_RANGE;
-    const maxDist = this.FOV_RANGE * this.MAX_RAY_DIST_FACTOR;
+    const maxDist = this.FOV_RANGE * this.MAX_BRIGHTNESS_DIST_FACTOR;
     this._drawFloorCeiling(ctx, w, h);
-    this._castWallRays(ctx, vp, frontAngle, obstacles, w, h, wallScale, maxDist);
+    this._castWallRays(ctx, vp, obstacles, w, h, wallScale, maxDist);
     this._drawEnemySprites(ctx, vp, frontAngle, enemies, obstacles, w, h, wallScale, maxDist);
 
     ctx.restore();
@@ -1596,8 +1597,10 @@ class Renderer {
     ctx.fillRect(0, h / 2, w, h / 2);
   }
 
-  _castWallRays(ctx, vp, frontAngle, obstacles, w, h, wallScale, maxDist) {
+  _castWallRays(ctx, vp, obstacles, w, h, wallScale, maxDist) {
     // Cast one ray per screen column. Fills this._zBuffer with perpendicular distances.
+    // Note: ray directions are precomputed in _precomputeRenderTables() at resize time,
+    // so frontAngle is not needed here.
     if (!this._zBuffer || !this._rayDirCos) return;
     const zBuf = this._zBuffer;
     const sentinel = this.FOV_RANGE * this.MAX_RAY_DIST_FACTOR;
@@ -1674,13 +1677,21 @@ class Renderer {
     const projPlaneDist = (w / 2) / Math.tan(this.FOV_HALF_ANGLE);
     const [eR, eG, eB] = this.COLORS.enemyRGB;
 
-    const sorted = enemies.slice().sort((a, b) => {
-      const dA = (a.x - vp.x) ** 2 + (a.y - vp.y) ** 2;
-      const dB = (b.x - vp.x) ** 2 + (b.y - vp.y) ** 2;
+    // Sort far-to-near using a reusable index buffer (avoids per-frame slice + GC)
+    const n = enemies.length;
+    if (!this._sortIdxBuf || this._sortIdxBuf.length < n) {
+      this._sortIdxBuf = new Uint16Array(Math.max(n, 16));
+    }
+    for (let i = 0; i < n; i++) this._sortIdxBuf[i] = i;
+    const sortIdx = this._sortIdxBuf.subarray(0, n);
+    sortIdx.sort((a, b) => {
+      const dA = (enemies[a].x - vp.x) ** 2 + (enemies[a].y - vp.y) ** 2;
+      const dB = (enemies[b].x - vp.x) ** 2 + (enemies[b].y - vp.y) ** 2;
       return dB - dA;
     });
 
-    for (const enemy of sorted) {
+    for (let si = 0; si < n; si++) {
+      const enemy = enemies[sortIdx[si]];
       const dx = enemy.x - vp.x;
       const dy = enemy.y - vp.y;
       const dist = Math.sqrt(dx * dx + dy * dy);

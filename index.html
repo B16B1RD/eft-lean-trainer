@@ -1428,16 +1428,18 @@ class Renderer {
 
     // Design-spec constants (configurable via config param for testing)
     const defaults = {
-      GRID_SIZE: 40,
-      CHAR_RADIUS: 15,
       ENEMY_RADIUS: 10,
       FOV_HALF_ANGLE: Math.PI / 6, // 30°
       FOV_RANGE: 250,
       LEAN_OFFSET_X: 20,
       LEAN_ROTATION: (5 * Math.PI) / 180, // 5°
-      EXPOSURE_SAMPLES: 16,
+      MAX_SLICE_FACTOR: 4,
+      MAX_RAY_DIST_FACTOR: 4,
     };
-    Object.assign(this, defaults, config);
+    Object.assign(this, defaults);
+    for (const k of Object.keys(defaults)) {
+      if (k in config) this[k] = config[k];
+    }
 
     // Colors matching military-dark theme
     this.COLORS = {
@@ -1445,21 +1447,14 @@ class Renderer {
       floor: '#0d160d',
       wallBase: [90, 106, 122],  // rgb of #5a6a7a
       enemyRGB: [233, 69, 96],   // rgb of #e94560
-      // Legacy colors retained for test compatibility
-      grid: 'rgba(40, 65, 45, 0.3)',
-      charBody: '#3a7ecf',
-      charStroke: '#5a9eef',
-      fov: 'rgba(58, 138, 219, 0.12)',
-      fovStroke: 'rgba(58, 138, 219, 0.3)',
-      viewpoint: '#ffcc00',
-      obstacle: '#5a6a7a',
-      obstacleStroke: '#7a8a9a',
-      enemy: '#e94560',
-      enemyStroke: '#ff6580',
-      rayVisible: '#16c79a',
-      rayBlocked: '#e94560',
-      exposure: '#ffffff',
     };
+
+    // Precomputed per-column tables (populated in resize())
+    this._zBuffer = null;
+    this._rayDirCos = null;
+    this._rayDirSin = null;
+    this._fishEyeCorr = null;
+    this._wallColorTable = null;
   }
 
   get width() { return this._displayWidth; }
@@ -1492,19 +1487,21 @@ class Renderer {
     }
 
     // Draw layers: ceiling/floor → walls → enemy sprites
+    const wallScale = h * this.FOV_RANGE;
+    const maxDist = this.FOV_RANGE * this.MAX_RAY_DIST_FACTOR;
     this._drawFloorCeiling(ctx, w, h);
-    const zBuffer = this._castWallRays(ctx, vp, frontAngle, obstacles, w, h);
-    this._drawEnemySprites(ctx, vp, frontAngle, enemies, obstacles, zBuffer, w, h);
+    this._castWallRays(ctx, vp, frontAngle, obstacles, w, h, wallScale, maxDist);
+    this._drawEnemySprites(ctx, vp, frontAngle, enemies, obstacles, w, h, wallScale, maxDist);
 
     ctx.restore();
   }
 
   _sanitizeState(state, w, h) {
     return {
-      obstacles: state.obstacles || [],
-      enemies: state.enemies || [],
-      character: state.character || { x: w / 2, y: h / 2 },
-      leanState: state.leanState || 'neutral',
+      obstacles: Array.isArray(state?.obstacles) ? state.obstacles : [],
+      enemies: Array.isArray(state?.enemies) ? state.enemies : [],
+      character: state?.character ?? { x: w / 2, y: h / 2 },
+      leanState: state?.leanState ?? 'neutral',
     };
   }
 
@@ -1512,17 +1509,43 @@ class Renderer {
     const container = this._canvas.parentElement;
     if (!container) return;
     const dpr = window.devicePixelRatio || 1;
-    this._displayWidth = container.clientWidth;
-    this._displayHeight = container.clientHeight;
+    this._displayWidth = Math.min(container.clientWidth, 4096);
+    this._displayHeight = Math.min(container.clientHeight, 4096);
     this._canvas.width = this._displayWidth * dpr;
     this._canvas.height = this._displayHeight * dpr;
     this._canvas.style.width = this._displayWidth + 'px';
     this._canvas.style.height = this._displayHeight + 'px';
     this._ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this._precomputeRenderTables();
   }
 
   destroy() {
     this._ctx = null;
+  }
+
+  _precomputeRenderTables() {
+    const w = this._displayWidth;
+    if (w === 0) return;
+    const frontAngle = this._getFrontAngle();
+    const fovTotal = this.FOV_HALF_ANGLE * 2;
+    const wMinus1 = Math.max(1, w - 1);
+    this._zBuffer = new Float32Array(w);
+    this._rayDirCos = new Float32Array(w);
+    this._rayDirSin = new Float32Array(w);
+    this._fishEyeCorr = new Float32Array(w);
+    for (let x = 0; x < w; x++) {
+      const rayAngle = frontAngle + ((x / wMinus1) - 0.5) * fovTotal;
+      this._rayDirCos[x] = Math.cos(rayAngle);
+      this._rayDirSin[x] = Math.sin(rayAngle);
+      this._fishEyeCorr[x] = Math.cos(rayAngle - frontAngle);
+    }
+    // Wall color lookup table: 256 brightness levels → pre-built rgb strings
+    const [baseR, baseG, baseB] = this.COLORS.wallBase;
+    this._wallColorTable = new Array(256);
+    for (let i = 0; i < 256; i++) {
+      const t = i / 255;
+      this._wallColorTable[i] = `rgb(${Math.round(baseR * t)},${Math.round(baseG * t)},${Math.round(baseB * t)})`;
+    }
   }
 
   // --- Viewpoint calculation ---
@@ -1573,21 +1596,21 @@ class Renderer {
     ctx.fillRect(0, h / 2, w, h / 2);
   }
 
-  _castWallRays(ctx, vp, frontAngle, obstacles, w, h) {
-    // Cast one ray per screen column. Returns zBuffer (perpendicular distance per column).
-    const zBuffer = new Float32Array(w);
-    const wallScale = h * this.FOV_RANGE;
-    const [baseR, baseG, baseB] = this.COLORS.wallBase;
-    const maxDist = this.FOV_RANGE * 2;
-    const fovTotal = this.FOV_HALF_ANGLE * 2;
-    const sentinel = this.FOV_RANGE * 4;
-    const wMinus1 = Math.max(1, w - 1);
+  _castWallRays(ctx, vp, frontAngle, obstacles, w, h, wallScale, maxDist) {
+    // Cast one ray per screen column. Fills this._zBuffer with perpendicular distances.
+    if (!this._zBuffer || !this._rayDirCos) return;
+    const zBuf = this._zBuffer;
+    const sentinel = this.FOV_RANGE * this.MAX_RAY_DIST_FACTOR;
+    zBuf.fill(sentinel);
+
+    let runColor = null;
+    let runX = 0;
+    let runTop = 0;
+    let runH = 0;
 
     for (let x = 0; x < w; x++) {
-      // Ray angle: linearly distributed across FOV
-      const rayAngle = frontAngle + ((x / wMinus1) - 0.5) * fovTotal;
-      const rdx = Math.cos(rayAngle);
-      const rdy = Math.sin(rayAngle);
+      const rdx = this._rayDirCos[x];
+      const rdy = this._rayDirSin[x];
 
       // Find nearest obstacle hit
       let minDist = sentinel;
@@ -1597,37 +1620,59 @@ class Renderer {
       }
 
       // Fish-eye correction: project onto the view plane (perpendicular distance)
-      const perpDist = Math.max(0.1, minDist * Math.cos(rayAngle - frontAngle));
-      zBuffer[x] = perpDist;
+      const perpDist = Math.max(0.1, minDist * this._fishEyeCorr[x]);
+      zBuf[x] = perpDist;
 
-      if (minDist >= sentinel) continue; // ray hit nothing
+      if (minDist >= sentinel) {
+        // Flush current run (no wall here)
+        if (runColor !== null) {
+          ctx.fillStyle = runColor;
+          ctx.fillRect(runX, runTop, x - runX, runH);
+          runColor = null;
+        }
+        continue;
+      }
 
       // Compute wall slice height and vertical bounds
-      const sliceH = Math.min(h * 4, wallScale / perpDist);
-      const wallTop = Math.max(0, (h - sliceH) / 2);
-      const wallBottom = Math.min(h, (h + sliceH) / 2);
+      const sliceH = Math.min(h * this.MAX_SLICE_FACTOR, wallScale / perpDist);
+      const wallTop = Math.max(0, Math.round((h - sliceH) / 2));
+      const wallBottom = Math.min(h, Math.round((h + sliceH) / 2));
+      const sliceActualH = wallBottom - wallTop;
 
-      // Distance shading: darker at range, brighter up close
+      // Distance shading via precomputed color table
       const brightness = Math.max(0.15, 1 - perpDist / maxDist);
-      const r = Math.round(baseR * brightness);
-      const g = Math.round(baseG * brightness);
-      const b = Math.round(baseB * brightness);
+      const color = this._wallColorTable[Math.min(255, Math.round(brightness * 255))];
 
-      ctx.fillStyle = `rgb(${r},${g},${b})`;
-      ctx.fillRect(x, wallTop, 1, wallBottom - wallTop);
+      // RLE batching: accumulate consecutive columns with identical color and bounds
+      if (color === runColor && wallTop === runTop && sliceActualH === runH) {
+        // Extend current run
+      } else {
+        if (runColor !== null) {
+          ctx.fillStyle = runColor;
+          ctx.fillRect(runX, runTop, x - runX, runH);
+        }
+        runColor = color;
+        runX = x;
+        runTop = wallTop;
+        runH = sliceActualH;
+      }
     }
 
-    return zBuffer;
+    // Flush final run
+    if (runColor !== null) {
+      ctx.fillStyle = runColor;
+      ctx.fillRect(runX, runTop, w - runX, runH);
+    }
   }
 
-  _drawEnemySprites(ctx, vp, frontAngle, enemies, obstacles, zBuffer, w, h) {
+  _drawEnemySprites(ctx, vp, frontAngle, enemies, obstacles, w, h, wallScale, maxDist) {
     // Render enemy billboards sorted far-to-near (painter's algorithm).
-    // Each sprite column is clipped against zBuffer to avoid rendering
+    // Each sprite column is clipped against this._zBuffer to avoid rendering
     // enemies visible through walls.
+    if (!this._zBuffer) return;
+    const zBuf = this._zBuffer;
     const projPlaneDist = (w / 2) / Math.tan(this.FOV_HALF_ANGLE);
-    const wallScale = h * this.FOV_RANGE;
     const [eR, eG, eB] = this.COLORS.enemyRGB;
-    const maxDist = this.FOV_RANGE * 2;
 
     const sorted = enemies.slice().sort((a, b) => {
       const dA = (a.x - vp.x) ** 2 + (a.y - vp.y) ** 2;
@@ -1663,26 +1708,35 @@ class Renderer {
       const screenX = w / 2 + Math.tan(angleDiff) * projPlaneDist;
 
       // Sprite dimensions based on distance
-      const r = enemy.radius || this.ENEMY_RADIUS;
-      const spriteH = Math.min(h * 4, wallScale / dist);
-      const spriteW = spriteH * (r / this.ENEMY_RADIUS);
+      const spriteRadius = enemy.radius || this.ENEMY_RADIUS;
+      const spriteH = Math.min(h * this.MAX_SLICE_FACTOR, wallScale / dist);
+      const spriteW = spriteH * (spriteRadius / this.ENEMY_RADIUS);
       const spriteLeft = Math.round(screenX - spriteW / 2);
       const spriteRight = Math.round(screenX + spriteW / 2);
       const spriteTop = Math.max(0, Math.round((h - spriteH) / 2));
       const spriteBottom = Math.min(h, Math.round((h + spriteH) / 2));
       const spriteDist = dist * Math.cos(angleDiff); // perpendicular depth for zBuffer
+      if (!isFinite(spriteDist)) continue; // NaN/Inf guard
 
       // Distance shading
       const brightness = Math.max(0.3, 1 - dist / maxDist);
-      const r2 = Math.round(eR * brightness);
-      const g2 = Math.round(eG * brightness);
-      const b2 = Math.round(eB * brightness);
-      ctx.fillStyle = `rgb(${r2},${g2},${b2})`;
+      const shadedR = Math.round(eR * brightness);
+      const shadedG = Math.round(eG * brightness);
+      const shadedB = Math.round(eB * brightness);
+      const fillColor = `rgb(${shadedR},${shadedG},${shadedB})`;
 
-      // Draw column-by-column, skipping columns behind walls
-      for (let sx = Math.max(0, spriteLeft); sx < Math.min(w, spriteRight); sx++) {
-        if (spriteDist < zBuffer[sx]) {
-          ctx.fillRect(sx, spriteTop, 1, spriteBottom - spriteTop);
+      // RLE: batch consecutive visible columns (color/bounds are constant per enemy)
+      let runX = -1;
+      const xStart = Math.max(0, spriteLeft);
+      const xEnd = Math.min(w, spriteRight);
+      for (let sx = xStart; sx <= xEnd; sx++) {
+        const visible = sx < xEnd && spriteDist < zBuf[sx];
+        if (visible) {
+          if (runX === -1) runX = sx;
+        } else if (runX !== -1) {
+          ctx.fillStyle = fillColor;
+          ctx.fillRect(runX, spriteTop, sx - runX, spriteBottom - spriteTop);
+          runX = -1;
         }
       }
     }

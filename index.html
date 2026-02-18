@@ -1680,15 +1680,18 @@ class Renderer {
     // Sort far-to-near using a reusable index buffer (avoids per-frame slice + GC)
     const n = enemies.length;
     if (!this._sortIdxBuf || this._sortIdxBuf.length < n) {
-      this._sortIdxBuf = new Uint16Array(Math.max(n, 16));
+      this._sortIdxBuf = new Uint32Array(Math.max(n, 16));
     }
     for (let i = 0; i < n; i++) this._sortIdxBuf[i] = i;
     const sortIdx = this._sortIdxBuf.subarray(0, n);
-    sortIdx.sort((a, b) => {
-      const dA = (enemies[a].x - vp.x) ** 2 + (enemies[a].y - vp.y) ** 2;
-      const dB = (enemies[b].x - vp.x) ** 2 + (enemies[b].y - vp.y) ** 2;
-      return dB - dA;
-    });
+    // Pre-compute distance squared to avoid recalculation in comparator
+    const distSq = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      const ex = enemies[i].x - vp.x;
+      const ey = enemies[i].y - vp.y;
+      distSq[i] = ex * ex + ey * ey;
+    }
+    sortIdx.sort((a, b) => distSq[b] - distSq[a]);
 
     for (let si = 0; si < n; si++) {
       const enemy = enemies[sortIdx[si]];
@@ -1700,16 +1703,6 @@ class Renderer {
       // Skip if outside FOV
       if (!this._isInFOV(vp.x, vp.y, enemy.x, enemy.y, frontAngle)) continue;
 
-      // Skip if fully behind a wall (LOS check along enemy center direction)
-      const ndx = dx / dist;
-      const ndy = dy / dist;
-      let blocked = false;
-      for (const obs of obstacles) {
-        const t = this._rayAABBIntersect(vp.x, vp.y, ndx, ndy, obs);
-        if (t < dist - (enemy.radius || this.ENEMY_RADIUS)) { blocked = true; break; }
-      }
-      if (blocked) continue;
-
       // Project enemy center onto screen X
       const angleToEnemy = Math.atan2(dy, dx);
       const angleDiff = Math.atan2(
@@ -1719,7 +1712,7 @@ class Renderer {
       const screenX = w / 2 + Math.tan(angleDiff) * projPlaneDist;
 
       // Sprite dimensions based on distance
-      const spriteRadius = enemy.radius || this.ENEMY_RADIUS;
+      const spriteRadius = enemy.radius ?? this.ENEMY_RADIUS;
       const spriteH = Math.min(h * this.MAX_SLICE_FACTOR, wallScale / dist);
       const spriteW = spriteH * (spriteRadius / this.ENEMY_RADIUS);
       const spriteLeft = Math.round(screenX - spriteW / 2);
@@ -1740,8 +1733,8 @@ class Renderer {
       let runX = -1;
       const xStart = Math.max(0, spriteLeft);
       const xEnd = Math.min(w, spriteRight);
-      for (let sx = xStart; sx <= xEnd; sx++) {
-        const visible = sx < xEnd && spriteDist < zBuf[sx];
+      for (let sx = xStart; sx < xEnd; sx++) {
+        const visible = spriteDist < zBuf[sx];
         if (visible) {
           if (runX === -1) runX = sx;
         } else if (runX !== -1) {

@@ -4709,7 +4709,6 @@ class PlaceholderMode extends ModeLifecycle {
   // --- UI: Mode Select ---
   const modeSelect = document.getElementById('mode-select');
   const statusMode = document.getElementById('status-mode');
-  const drillPanel = document.getElementById('drill-panel');
   const modeLabels = {
     free: 'Free Practice',
     reaction: 'Key Reaction',
@@ -5004,7 +5003,7 @@ class PlaceholderMode extends ModeLifecycle {
       assert('state is running after init', testEngine.state === 'running');
       assert('isReady returns true after init', testEngine.isReady() === true);
       assert('currentTime is a number', typeof testEngine.currentTime === 'number');
-    } catch (e) {
+    } catch {
       assert('init succeeds (may fail without user gesture)', false);
     }
 
@@ -5013,7 +5012,7 @@ class PlaceholderMode extends ModeLifecycle {
       await testEngine.suspend();
       assert('state is suspended after suspend', testEngine.state === 'suspended');
       assert('isReady returns false after suspend', testEngine.isReady() === false);
-    } catch (e) {
+    } catch {
       assert('suspend succeeds', false);
     }
 
@@ -5022,7 +5021,7 @@ class PlaceholderMode extends ModeLifecycle {
       await testEngine.resume();
       assert('state is running after resume', testEngine.state === 'running');
       assert('isReady returns true after resume', testEngine.isReady() === true);
-    } catch (e) {
+    } catch {
       assert('resume succeeds', false);
     }
 
@@ -5030,7 +5029,7 @@ class PlaceholderMode extends ModeLifecycle {
     try {
       testEngine.playBeat(testEngine.currentTime + 0.1);
       assert('playBeat does not throw', true);
-    } catch (e) {
+    } catch {
       assert('playBeat does not throw', false);
     }
 
@@ -5039,7 +5038,7 @@ class PlaceholderMode extends ModeLifecycle {
       await testEngine.suspend();
       testEngine.playBeat(testEngine.currentTime + 0.1);
       assert('playBeat is no-op when suspended', true);
-    } catch (e) {
+    } catch {
       assert('playBeat is no-op when suspended', false);
     }
 
@@ -5053,13 +5052,13 @@ class PlaceholderMode extends ModeLifecycle {
     try {
       await uninitEngine.resume();
       assert('resume on uninitialized is no-op', true);
-    } catch (e) {
+    } catch {
       assert('resume on uninitialized is no-op', false);
     }
     try {
       await uninitEngine.suspend();
       assert('suspend on uninitialized is no-op', true);
-    } catch (e) {
+    } catch {
       assert('suspend on uninitialized is no-op', false);
     }
     uninitEngine.destroy();
@@ -5117,15 +5116,13 @@ class PlaceholderMode extends ModeLifecycle {
     mode3.enter();
     mode3.start();
 
-    let timerFired = false;
-    mode3._addTimeout(() => { timerFired = true; }, 50);
+    mode3._addTimeout(() => {}, 50);
     assert('timer is tracked', mode3._getResourceCounts().timers === 1);
 
-    const intervalId = mode3._addInterval(() => {}, 1000);
+    mode3._addInterval(() => {}, 1000);
     assert('interval is tracked', mode3._getResourceCounts().timers === 2);
 
-    let rafFired = false;
-    mode3._addRAF(() => { rafFired = true; });
+    mode3._addRAF(() => {});
     assert('raf is tracked', mode3._getResourceCounts().rafs === 1);
 
     const target = document.createElement('div');
@@ -5204,7 +5201,7 @@ class PlaceholderMode extends ModeLifecycle {
     let threwError = false;
     try {
       await mm2.switchTo('unknown');
-    } catch (e) {
+    } catch {
       threwError = true;
     }
     assert('switching to unknown mode throws', threwError);
@@ -5248,13 +5245,13 @@ class PlaceholderMode extends ModeLifecycle {
     testFP._inputManager.pressedKeys.delete('KeyD');
 
     // Diagonal movement should be normalized
-    testFP._scene.character.x = 200;
-    testFP._scene.character.y = 200;
+    testFP._scene.character.x = startX;
+    testFP._scene.character.y = startY;
     testFP._inputManager.pressedKeys.add('KeyW');
     testFP._inputManager.pressedKeys.add('KeyD');
     testFP._updateMovement(0.1);
-    const diagDx = testFP._scene.character.x - 200;
-    const diagDy = 200 - testFP._scene.character.y;
+    const diagDx = testFP._scene.character.x - startX;
+    const diagDy = startY - testFP._scene.character.y;
     const diagDist = Math.sqrt(diagDx * diagDx + diagDy * diagDy);
     const straightDist = testFP.MOVE_SPEED * 0.1;
     assert('diagonal movement is normalized', Math.abs(diagDist - straightDist) < 1);
@@ -5363,7 +5360,8 @@ class PlaceholderMode extends ModeLifecycle {
     drillMode._kroAttempts['KeyA+KeyQ'] = { total: 5, failed: 3 };
     const warnings = drillMode._getKroWarnings();
     assert('KRO warning triggers at 60% fail rate with 5+ attempts', warnings.length === 1);
-    assert('KRO warning combo is A+Q', warnings[0] === 'A+Q');
+    assert('KRO warning uses current key symbols',
+      warnings[0] === (input.useEftStandard ? '←+↶' : '←+↷'));
 
     // Below threshold
     drillMode._kroAttempts['KeyD+KeyE'] = { total: 5, failed: 2 };
@@ -6027,41 +6025,31 @@ class PlaceholderMode extends ModeLifecycle {
     // Test AudioEngine resume failure handling
     const testEngine = new AudioEngine();
 
+    await testEngine.init();
+
+    // Mock resume to reject
+    const origCtx = testEngine._audioCtx;
+    const origResume = origCtx.resume;
+
+    // Force suspend first
+    await testEngine.suspend();
+    assert('engine is suspended', testEngine.state === 'suspended');
+
+    // Replace resume with one that rejects
+    origCtx.resume = () => Promise.reject(new Error('Mock resume failure'));
+
     try {
-      await testEngine.init();
-
-      // Mock resume to reject
-      const origCtx = testEngine._ctx;
-      const origResume = origCtx.resume.bind(origCtx);
-
-      // Force suspend first
-      await testEngine.suspend();
-      assert('engine is suspended', testEngine.state === 'suspended');
-
-      // Replace resume with one that rejects
-      origCtx.resume = () => Promise.reject(new Error('Mock resume failure'));
-
-      try {
-        await testEngine.resume();
-        // If resume catches the error internally, state should still be suspended
-        assert('resume failure keeps engine suspended or handles gracefully',
-          testEngine.state === 'suspended' || testEngine.lastError !== null);
-      } catch (e) {
-        // Resume threw — that's also acceptable
-        assert('resume failure throws error', e.message === 'Mock resume failure');
-        assert('state remains suspended after failure', testEngine.state === 'suspended');
-      }
-
-      // Restore original resume
-      origCtx.resume = origResume;
       await testEngine.resume();
-      assert('resume works after restoring', testEngine.state === 'running');
-
+      assert('resume failure is reported', testEngine.lastError?.message === 'Mock resume failure');
     } catch (e) {
-      // AudioContext may not be available without user gesture in some environments.
-      // This is an environment limitation, not a test failure — skip gracefully.
-      console.warn('AudioEngine resume test skipped: ' + e.message);
+      assert('resume failure throws error', e.message === 'Mock resume failure');
+      assert('state remains suspended after failure', testEngine.state === 'suspended');
+    } finally {
+      origCtx.resume = origResume;
     }
+
+    await testEngine.resume();
+    assert('resume works after restoring', testEngine.state === 'running');
 
     testEngine.destroy();
 
